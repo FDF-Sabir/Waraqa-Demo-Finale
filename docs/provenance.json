@@ -1,0 +1,16 @@
+{
+  "version": "4.0.0-demo",
+  "sources": [
+    {
+      "archive": "Waraqa V2(1).zip",
+      "sha256": "91da958210925286712464f0115282c3cfcb114f3486ba402adeaf23818dc6b9",
+      "entries": 282
+    },
+    {
+      "archive": "Waraqa-FrontEnd.zip",
+      "sha256": "b74470887138d71e12c5a3ba26cc52bd425a27415d850d0940f88e04ec0da013",
+      "entries": 65
+    }
+  ],
+  "built_from": "Deux archives fournies, sans reprise de la base utilisateurs/factures originale"
+}

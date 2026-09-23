@@ -1,0 +1,13 @@
+{
+  "passed": 8,
+  "checks": [
+    "Account setup, monthly demo seed and dashboard",
+    "Prompt selection, real local chat response and reload persistence",
+    "Manual invoice, human review and Excel download",
+    "Browser file upload to persistent backend",
+    "All ten navigation pages render",
+    "Settings tabs and persistence",
+    "Mobile layout without horizontal overflow and working navigation",
+    "No browser console errors"
+  ]
+}

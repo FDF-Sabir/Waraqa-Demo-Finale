@@ -1,0 +1,10 @@
+[
+  {
+    "sousType": "avis_debit_virement",
+    "mTtc": 1200,
+    "taux": 0,
+    "idPaie": 4,
+    "datePaie": "2026-09-12",
+    "libFrss": "Fournisseur Exemple A"
+  }
+]

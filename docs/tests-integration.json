@@ -1,0 +1,22 @@
+{
+  "passed": 17,
+  "checks": [
+    "SPA served; missing API routes return 404",
+    "First-run setup, JWT authentication and closed registration",
+    "No key exposure; live mode cannot activate without key",
+    "Demo samples explicit and idempotent",
+    "Review rejects incomplete entries and is reset on edit",
+    "Balanced rounding and payment-month filtering",
+    "Server-derived amounts, date validation and blocked duplicate review",
+    "Real CSV parsing, leading zeros, partial-lot errors and content duplicate blocking",
+    "Scans stored without fabricated extraction and linked to manual entries",
+    "Human-confirmed reconciliation and bank exclusion from purchase totals",
+    "Real Excel and balanced Sage CSV exports, reviewed-only selection",
+    "Immutable snapshot despite later edits",
+    "Prompt templates create/edit/delete",
+    "Persistent contextual chat with structured local replies and attachments",
+    "Admin permissions, chat privacy and revoked deleted-user access",
+    "Restart persistence for settings, invoices, documents and chat",
+    "Password change revokes existing sessions"
+  ]
+}

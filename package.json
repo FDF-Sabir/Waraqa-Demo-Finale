@@ -1,0 +1,17 @@
+{
+  "name": "waraqa-demo-finale",
+  "version": "4.0.0-demo",
+  "private": true,
+  "description": "Nouvelle application unifi\u00e9e : services V2, interface, chat et d\u00e9mo locale persistante",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node scripts/start.cjs",
+    "setup": "node scripts/setup.cjs",
+    "build": "npm run build --prefix backend && npm exec --prefix frontend -- tsc --noEmit -p frontend/tsconfig.json && npm run build --prefix frontend",
+    "test": "npm test --prefix backend -- --runInBand && npm run test:e2e --prefix backend -- --runInBand && node scripts/smoke.cjs",
+    "test:smoke": "node scripts/smoke.cjs",
+    "test:ui": "node scripts/ui-test.mjs"
+  }
+}
