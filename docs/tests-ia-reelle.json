@@ -1,0 +1,87 @@
+{
+  "date": "2026-09-23T22:53:00.994Z",
+  "budgetUsd": 0.3,
+  "checks": [
+    {
+      "label": "Clé, modèle et crédit",
+      "ok": true,
+      "detail": "Claude Sonnet 5 en 2015 ms"
+    },
+    {
+      "label": "Assistant avec outils",
+      "ok": true,
+      "detail": "anomalies, rapprochement, proposer_action, proposer_action, proposer_action, proposer_action · 4 action(s) proposée(s) · 13.8 s · 0.0230 $"
+    },
+    {
+      "label": "Relance dans la même discussion",
+      "ok": true,
+      "detail": "12183 tokens lus depuis le cache · 0.0093 $"
+    },
+    {
+      "label": "Cache des réponses (0 $)",
+      "ok": true
+    },
+    {
+      "label": "Extraction d’une facture",
+      "ok": true,
+      "detail": "5/5 champs exacts · confiance 0.95"
+    }
+  ],
+  "costs": {
+    "chat": 0.022959,
+    "followUp": 0.009347,
+    "total": 0.040311
+  },
+  "extraction": {
+    "confiance": 0.95,
+    "champs": [
+      {
+        "champ": "factNum",
+        "attendu": "FX-2026-0917",
+        "lu": "FX-2026-0917",
+        "ok": true
+      },
+      {
+        "champ": "mTtc",
+        "attendu": 1800,
+        "lu": 1800,
+        "ok": true
+      },
+      {
+        "champ": "taux",
+        "attendu": 0.2,
+        "lu": 0.2,
+        "ok": true
+      },
+      {
+        "champ": "iceFrs",
+        "attendu": "000987654000021",
+        "lu": "000987654000021",
+        "ok": true
+      },
+      {
+        "champ": "dateFac",
+        "attendu": "2026-09-17",
+        "lu": "2026-09-17",
+        "ok": true
+      }
+    ],
+    "mHt": 1500,
+    "tva": 300
+  },
+  "usage": {
+    "month": "2026-09",
+    "calls": 7,
+    "inputTokens": 391,
+    "outputTokens": 1911,
+    "cacheReadTokens": 30414,
+    "cacheWriteTokens": 5734,
+    "costUsd": 0.040311,
+    "cacheHits": 2,
+    "byFeature": {
+      "test": 0.000074,
+      "chat": 0.032306,
+      "extraction": 0.007931
+    }
+  }
+}

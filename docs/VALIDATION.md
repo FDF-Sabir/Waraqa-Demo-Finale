@@ -1,4 +1,20 @@
-# Validation locale — 23 septembre 2026 (version 4.2.0)
+# Validation locale — 23 septembre 2026 (version 4.4.0)
+
+## Version 4.4.0 — agent comptable, relevé de déduction, import de dossiers (23/09/2026)
+
+| Commande | Résultat |
+|---|---|
+| `npm run build` | OK (NestJS, TypeScript frontend, Vite) |
+| `npm test` | **118 unitaires · 98 e2e · 17 parcours intégrés** — 0 échec |
+| `npm run test:ui` (Chromium) | **13 groupes** réussis (dont import ZIP → relevé → XML, pièce jointe du chat, 14 formats × 11 pages), aucune erreur console |
+| `npm run test:ia` (réel, clé Sonnet 5) | 5/5 champs exacts, outils + 4 actions proposées, cache — 0,04 $ |
+| `npm run test:releve` (réel, relevé Excel réel du comptable joint) | ZIP de 4 pièces lu en 13 s ; **30/30 champs** lus par Claude (facture à deux taux scindée) ; relevé de juillet : 100 lignes retenues, 4 écartées avec motif ; TTC identique au centime au relevé Excel de référence (5 769 512,40) ; **XML valide contre le schéma DGI** embarqué dans le modèle ; Excel ouvert et recalculé par LibreOffice ; assistant — 0,10 $ |
+
+Audit en conditions réelles (navigateur, base temporaire, clé réelle, 0,05 $) : les 11 écrans sans erreur ; agent — question libre → boutons (valider 3 lignes, XML SIMPL, JSON) → fenêtre de confirmation → exécution → téléchargements ; lecture d’une pièce déjà importée ; snapshot ; compte « comptable » (import et relevé oui ; clôture, réglages, utilisateurs, sauvegarde non) ; sauvegarde puis restauration dans un dossier neuf (intégrité SQLite et originaux).
+
+Anomalies trouvées et corrigées pendant cette validation : sauvegarde refusée par SQLite pendant un import (17 échecs sur 25 en rafale, sauvegarde quotidienne Drive comprise) ; sélecteurs de fichiers du chat et de l’import pouvant perdre le fichier choisi ; doublons faussement détectés sur les commissions bancaires récurrentes ; réponse de l’assistant tronquée après son dernier outil ; bouton annoncé sans proposition réelle.
+
+Non vérifié : dépôt effectif du XML sur SIMPL (portail DGI) ; import par lien Drive sur le compte réel (autorisation de lecture à donner par l’utilisateur).
 
 ## Version 4.3.0 — profil en ligne et Google Drive (23/09/2026)
 

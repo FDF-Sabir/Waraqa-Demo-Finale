@@ -252,12 +252,12 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
   }
   async diagnostics(user: any) {
     await this.admin(user);
-    return { version:'4.3.0', profile:profile(), node:process.version, uptimeSeconds:Math.floor(process.uptime()), memory:process.memoryUsage(), invoices:await this.invoices.count(), documents:await this.records.countBy({kind:'document'}), importing:this.importing, activeChats:this.busyChats.size, apiKeyConfigured:Boolean(apiKey()), iaCallsInFlight: IaGateway.busy };
+    return { version:'4.4.0', profile:profile(), node:process.version, uptimeSeconds:Math.floor(process.uptime()), memory:process.memoryUsage(), invoices:await this.invoices.count(), documents:await this.records.countBy({kind:'document'}), importing:this.importing, activeChats:this.busyChats.size, apiKeyConfigured:Boolean(apiKey()), iaCallsInFlight: IaGateway.busy };
   }
   async status() {
     const settings = await this.settings();
     return {
-      version: "4.3.0",
+      version: "4.4.0",
       configured: Boolean(apiKey()),
       needsSetup: (await this.users.count()) === 0,
       profile: profile(),

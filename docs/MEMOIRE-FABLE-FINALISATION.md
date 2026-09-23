@@ -85,3 +85,8 @@ L'utilisateur veut que le chat IA se comporte « comme les grands modèles » : 
 
 ---
 *Document généré à la demande explicite de l'utilisateur, sans aucune modification de code, à l'issue d'une session ayant livré le relevé de déduction TVA et corrigé plusieurs anomalies d'import et de réponse de l'assistant. Vérifiez toute affirmation contre le code réel avant d'agir : ce mémoire décrit un état à un instant donné, pas une source de vérité permanente.*
+
+
+## Réalisé (Opus 5.5, 23/09/2026 — version 4.4.0)
+
+Lots 0 à G de `docs/PLAN-OPUS-FINALISATION.md` exécutés, commits sur `online-drive` (sans push). Principe maintenu : l’IA propose, le comptable confirme. État détaillé : `docs/ETAT-REPRISE.md` ; chiffres de tests et audit réel : `docs/VALIDATION.md`.

@@ -1,4 +1,4 @@
-# Waraqa 4.3 — application locale, fonctionnement en ligne
+# Waraqa 4.4 — application locale, fonctionnement en ligne
 
 Waraqa s’installe et se lance **sur votre poste**, mais dès son démarrage il travaille comme une version hébergée (**profil en ligne**, par défaut) :
 
@@ -39,7 +39,7 @@ Dans `backend/.env` : `WARAQA_PROFILE=local`, puis relancer. Le mode connecté r
 
 ## Fonctions réunies
 
-- **Assistant IA connecté** (Claude) : consulte vos lignes, anomalies, paiements, pièces et journal via des outils en lecture seule, cite les lignes (#id), montre les données consultées et le coût, et **propose des actions** (ouvrir une ligne, rapprocher, exporter) que vous confirmez d’un clic.
+- **Agent comptable IA** (Claude Sonnet 5) : joignez vos pièces (PDF, photos, Excel, CSV, JSON, dossier ZIP) ou le lien d’un dossier Drive, demandez en langage courant (« valide les lignes conformes de juillet, puis donne-moi le XML SIMPL et l’Excel »). L’assistant consulte 16 outils, cite les lignes (#id), montre les données consultées et le coût, et prépare les **boutons d’action** (valider, rattacher, clôturer, importer un dossier Drive, snapshot, désignation, archivage, rapprochement) et de **téléchargement** (Excel, PDF, CSV, Sage, JSON, XML SIMPL, Excel DGI, snapshot, sauvegarde, pièce originale). Chaque action est vérifiée par le serveur et exécutée seulement après votre confirmation. Détail : `docs/IA-ASSISTANT.md`.
 - **Lecture des pièces par l’IA** : PDF, scans et photos classés et lus en sortie structurée ; HT/TVA toujours recalculés par le serveur ; revue humaine obligatoire.
 - **Cache** : réponses identiques réutilisées tant que les données n’ont pas changé (0 $, bouton Régénérer) ; prompts mis en cache chez le fournisseur (relus à 10 % du prix). **Budget mensuel** et consommation détaillée.
 - Discussion avec historique persistant par mois, plusieurs conversations, renommage/suppression, pièces jointes, réponses mises en forme, progression en direct, copier, réessayer, régénérer, accès aux pièces et export Excel.

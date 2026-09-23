@@ -1,6 +1,23 @@
-# État de reprise — 23 septembre 2026 · version 4.3.0 (profil en ligne)
+# État de reprise — 23 septembre 2026 · version 4.4.0 (agent comptable)
 
-## Ajouté en 4.3.0 (branche `online-drive`)
+## Ajouté en 4.4.0 (branche `online-drive`)
+
+- **Relevé de déduction DGI** (modèle ADC082F-15I, art. 112 CGI) — `backend/src/unified/releve.ts`, page `frontend/src/Declaration.tsx` : contrôles DGI, lignes écartées avec motif, déductions tardives ≤ 12 mois, XML SIMPL, Excel au modèle officiel (`backend/src/assets/releve-deduction-modele.xlsx`, régénérable par `scripts/build-releve-template.cjs`), PDF, clôture. Guide : `docs/RELEVE-DEDUCTION.md`.
+- **Import de dossiers** : ZIP (`archive-import.ts`) ou lien de dossier Google Drive (`integrations.service.ts::readFolder`, portée `drive.readonly` demandée à la première utilisation), traités en arrière-plan (`startLot`/`runLot`). Lecture tolérante des tableaux (`table-import.ts`). Entrées : PDF, JPG, PNG, GIF, WEBP, XLSX, XLS, CSV, JSON ; HEIC/TIFF/Word/e-mail refusés avec la conversion à faire.
+- **Agent comptable** (`backend/src/ia/assistant.ts`) : 16 outils en lecture, 14 types d’actions proposées (validation, rattachement, clôture, import Drive, snapshot, désignation, notification, archivage, rapprochement, téléchargements en 11 formats, pièce originale), vérifiées côté serveur puis exécutées après confirmation dans le chat (`UnifiedChat.tsx::executeAction`). Principe inchangé : l’IA ne calcule ni ne modifie rien elle-même.
+- **Mise en service** : `GET /api/workspace/readiness` et bandeau ; sans clé, plus aucune réponse préenregistrée en profil en ligne. `DEMARRER.sh` choisit Node ≥ 22 via nvm.
+- Corrections : sauvegarde pendant un import (`backup.ts`), sélecteurs de fichiers, doublons des commissions bancaires, réponse tronquée de l’assistant, bouton annoncé sans proposition, listes longues (journal, pièces) affichées par tranches, libellés comptables.
+
+Résultats 4.4.0 : 118 unitaires, 98 e2e, 17 parcours intégrés, 13 groupes navigateur ; validations réelles `test:ia` et `test:releve` réussies (détail dans `VALIDATION.md`).
+
+Reste à faire côté poste : renseigner Réglages → Entreprise (raison sociale, IF, régime) ; au premier import par lien Drive, autoriser la lecture ; vérifier le premier dépôt du XML sur SIMPL.
+
+---
+
+## Historique — version 4.3.0
+
+
+### Ajouté en 4.3.0
 
 - **Profil `online`** (`WARAQA_PROFILE`, défaut) — `backend/src/common/profile.ts` : clé présente ⇒ mode IA `live` imposé (réglages, extraction des pièces, route historique `/api/ocr`). `WARAQA_PROFILE=local` restaure le comportement 4.2.
 - **Google Drive** — `backend/src/unified/integrations.service.ts` : OAuth PKCE `openid email drive.file`, compte verrouillé par `GOOGLE_ALLOWED_EMAIL` (e-mail vérifié du id_token, révocation si refus), identifiants saisis dans l’UI (JSON Google ou champs) écrits dans `backend/.env`, arborescence `Waraqa/{Pièces/AAAA-MM, Exports/AAAA-MM, Snapshots, Sauvegardes}` créée et recréée si supprimée.

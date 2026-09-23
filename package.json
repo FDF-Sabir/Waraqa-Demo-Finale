@@ -1,6 +1,6 @@
 {
   "name": "waraqa-demo-finale",
-  "version": "4.3.0",
+  "version": "4.4.0",
   "private": true,
   "description": "Nouvelle application unifiée : services V2, interface, chat et démo locale persistante",
   "engines": {
@@ -14,7 +14,8 @@
     "test:smoke": "node scripts/smoke.cjs",
     "test:ui": "node scripts/ui-test.mjs",
     "test:ia": "node scripts/test-ia-reelle.cjs",
-    "test:releve": "node scripts/test-reel-releve.cjs"
+    "test:releve": "node scripts/test-reel-releve.cjs",
+    "manifest": "node scripts/manifest.cjs"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0"
