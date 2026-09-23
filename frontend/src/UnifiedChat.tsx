@@ -2,6 +2,26 @@ import { useEffect, useRef, useState } from "react";
 import { api, money, token, type RecordItem } from "./api";
 import { Icon } from "./Icons";
 import { InvoiceTable, Modal, type Page, type Run } from "./App";
+import Markdown from "./Markdown";
+
+const usd = (n: number) =>
+  n < 0.01 && n > 0 ? "< 0,01 $" : n.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " $";
+
+/** Consommation d'une réponse : nouveau format (appels, coût) et ancien (tokens bruts). */
+function UsageLine({ usage, cached }: { usage: any; cached?: any }) {
+  if (cached) return <small className="u-usage">Réponse réutilisée (données inchangées depuis le {new Date(cached.createdAt).toLocaleString("fr-FR")}) · 0 $</small>;
+  if (!usage) return null;
+  if (usage.calls !== undefined) {
+    const input = (usage.inputTokens || 0) + (usage.cacheReadTokens || 0) + (usage.cacheWriteTokens || 0);
+    const ratio = input ? Math.round(((usage.cacheReadTokens || 0) / input) * 100) : 0;
+    return <small className="u-usage">≈ {usd(usage.costUsd || 0)} · {usage.calls} appel(s) · {input.toLocaleString("fr-FR")} tokens lus{ratio ? ` dont ${ratio} % en cache` : ""} · {(usage.outputTokens || 0).toLocaleString("fr-FR")} écrits</small>;
+  }
+  return <small className="u-usage">Consommation : {usage.input_tokens} tokens entrants · {usage.output_tokens} sortants.</small>;
+}
+const SOURCE_LABELS: Record<string, string> = {
+  synthese_mois: "Synthèse", rechercher_lignes: "Lignes", detail_ligne: "Détail", anomalies: "Anomalies",
+  top_fournisseurs: "Fournisseurs", rapprochement: "Rapprochement", pieces: "Pièces", journal: "Journal", proposer_action: "Action",
+};
 export default function Chat({
   month,
   go,
@@ -12,6 +32,7 @@ export default function Chat({
   run,
   refresh,
   exportFile,
+  openInvoice,
 }: {
   month: string;
   go: (p: Page) => void;
@@ -22,6 +43,7 @@ export default function Chat({
   run: Run;
   refresh: () => Promise<void>;
   exportFile: (f: string) => Promise<void>;
+  openInvoice: (id: number) => Promise<void>;
 }) {
   const draftKey = 'waraqa-draft-' + token().split('.')[1] + '-' + month;
   const [conversations, setConversations] = useState<RecordItem[]>([]),
@@ -31,7 +53,10 @@ export default function Chat({
     [busy, setBusy] = useState(false),
     [rename, setRename] = useState(false),
     [remove, setRemove] = useState(false),
-    [convSearch, setConvSearch] = useState("");
+    [convSearch, setConvSearch] = useState(""),
+    [steps, setSteps] = useState<string[]>([]),
+    [budget, setBudget] = useState<any>(null),
+    [confirm, setConfirm] = useState<any>(null);
   const pendingConversation = useRef("");
   const scroll = useRef<HTMLDivElement>(null),
     area = useRef<HTMLTextAreaElement>(null),
@@ -53,6 +78,20 @@ export default function Chat({
     setText(sessionStorage.getItem(draftKey) || '');
     run(load);
   }, [month]);
+  async function loadBudget() {
+    if (mode !== "live") return setBudget(null);
+    try { setBudget(await api("/workspace/ai")); } catch { setBudget(null); }
+  }
+  useEffect(() => { loadBudget(); }, [mode]);
+  // Progression de l'assistant (outils consultés) pendant la réponse.
+  useEffect(() => {
+    if (!busy || mode !== "live") { setSteps([]); return; }
+    const timer = setInterval(async () => {
+      if (!pendingConversation.current) return;
+      try { const p = await api("/workspace/conversations/" + pendingConversation.current + "/progress"); setSteps(p.steps || []); } catch { /* sans effet */ }
+    }, 1200);
+    return () => clearInterval(timer);
+  }, [busy, mode]);
   useEffect(() => {
     if (draft) {
       setText(draft);
@@ -73,7 +112,7 @@ export default function Chat({
     setActiveId(c.id);
     return c;
   }
-  async function send(retryText?: string, retryIds: string[] = []) {
+  async function send(retryText?: string, retryIds: string[] = [], noCache = false) {
     const question =
       (retryText || text).trim() ||
       (files.length ? "Analyse les pièces jointes." : "");
@@ -97,12 +136,13 @@ export default function Chat({
       const updated = await api(
         "/workspace/conversations/" + c!.id + "/messages",
         "POST",
-        { text: question, documentIds },
+        { text: question, documentIds, ...(noCache ? { noCache: true } : {}) },
       );
       setConversations((p) =>
         p.map((x) => (x.id === updated.id ? updated : x)),
       );
       await refresh();
+      await loadBudget();
     });
     if (!ok) {
       editDraft(sentText || question);
@@ -124,8 +164,15 @@ export default function Chat({
           <span className="eyebrow">VOTRE ASSISTANT COMPTABLE</span>
           <h1>Discussion avec Waraqa</h1>
         </div>
-        <span className={"u-ai-label " + (mode === "live" ? "live" : "")}>
-          {mode === "live" ? "IA connectée" : "Démo · analyses locales"}
+        <span className="u-chat-status">
+          {budget && (
+            <span className={"u-budget " + (budget.usage.costUsd >= budget.budgetUsd * 0.8 ? "warn" : "")} title="Consommation estimée du mois / budget fixé dans Réglages → Assistant IA">
+              {usd(budget.usage.costUsd)} / {budget.budgetUsd} $ ce mois
+            </span>
+          )}
+          <span className={"u-ai-label " + (mode === "live" ? "live" : "")}>
+            {mode === "live" ? "IA connectée" : "Démo · analyses locales"}
+          </span>
         </span>
       </div>
       <div className="u-chat-layout">
@@ -218,8 +265,8 @@ export default function Chat({
                   Une synthèse, un contrôle ou vos prochaines actions.
                   <br />
                   {mode === "live"
-                    ? "Les totaux couvrent le mois entier. Joignez des pièces pour une analyse détaillée (100 lignes maximum)."
-                    : "Commencez sans clé avec les analyses locales de votre dossier."}
+                    ? "Waraqa consulte directement vos lignes, anomalies, paiements et pièces, puis vous propose des actions à confirmer. Joignez un scan pour le faire lire."
+                    : "Commencez sans clé avec les analyses locales de votre dossier. Activez l’IA dans Réglages → Assistant IA."}
                 </p>
                 <div className="u-prompt-grid">
                   {templates.slice(0, 4).map((t) => (
@@ -250,20 +297,55 @@ export default function Chat({
                       {m.mode === "demo"
                         ? "Analyse locale · sans IA externe"
                         : m.mode === "live"
-                          ? "Réponse IA"
+                          ? m.result?.cached ? "Réponse IA · réutilisée" : "Réponse IA" + (m.result?.model ? " · " + m.result.model : "")
                           : m.mode === "error"
                             ? "Connexion en erreur"
                             : ""}
                     </span>
                   </div>
-                  <div className="u-message-text">{m.content}</div>
+                  {m.role === "assistant" && m.mode === "live" ? (
+                    <div className="u-message-text u-message-md"><Markdown text={m.content} /></div>
+                  ) : (
+                    <div className="u-message-text">{m.content}</div>
+                  )}
+                  {m.result?.actions?.length > 0 && (
+                    <div className="u-ai-actions">
+                      <small>Actions proposées — rien n’est exécuté sans votre clic</small>
+                      {m.result.actions.map((a: any, n: number) => (
+                        <button
+                          key={n}
+                          className="secondary small"
+                          title={a.justification || ""}
+                          disabled={busy}
+                          onClick={() => {
+                            if (a.type === "ouvrir_page") go(a.page);
+                            else if (a.type === "ouvrir_ligne") run(() => openInvoice(a.factureId));
+                            else if (a.type === "exporter") run(() => exportFile(a.format), "Fichier téléchargé");
+                            else if (a.type === "rapprocher") setConfirm(a);
+                          }}
+                        >
+                          {a.libelle}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {m.result?.sources?.length > 0 && (
+                    <details className="u-sources">
+                      <summary>Données consultées ({m.result.sources.length})</summary>
+                      <ul>
+                        {m.result.sources.map((src: any, n: number) => (
+                          <li key={n}><b>{SOURCE_LABELS[src.name] || src.name}</b> · {src.summary}{src.truncated ? " (tronqué)" : ""}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
                   {m.documentIds?.length > 0 && (
                     <small>
                       {m.documentIds.length} document(s) joint(s) et conservé(s)
                     </small>
                   )}
-                  {m.result?.scope && <p className="u-info">Périmètre : {m.result.scope.totalRows} lignes au total ; {m.result.scope.detailRows} lignes détaillées.{m.result.scope.historyMessages !== undefined ? ` Historique transmis : ${m.result.scope.historyMessages} messages maximum.` : ''}</p>}
-                  {m.result?.usage && <small>Consommation : {m.result.usage.input_tokens} tokens entrants · {m.result.usage.output_tokens} sortants.</small>}
+                  {m.result?.scope && m.result.scope.detailRows !== undefined && <p className="u-info">Périmètre : {m.result.scope.totalRows} lignes au total ; {m.result.scope.detailRows} lignes détaillées.{m.result.scope.historyMessages !== undefined ? ` Historique transmis : ${m.result.scope.historyMessages} messages maximum.` : ''}</p>}
+                  {(m.result?.usage || m.result?.cached) && <UsageLine usage={m.result.usage} cached={m.result.cached} />}
                   {m.result?.type === "table" && (
                     <InvoiceTable rows={m.result.rows} />
                   )}{" "}
@@ -297,6 +379,20 @@ export default function Chat({
                       >
                         Copier
                       </button>
+                      {m.mode === "live" && (
+                        <button
+                          className="u-text-button"
+                          disabled={busy}
+                          title="Nouvelle réponse sans réutiliser le cache"
+                          onClick={() => {
+                            const idx = messages.findIndex((x: any) => x.id === m.id);
+                            const original = messages.slice(0, idx).reverse().find((x: any) => x.role === "user");
+                            send(original?.content, original?.documentIds || [], true);
+                          }}
+                        >
+                          Régénérer
+                        </button>
+                      )}
                       {m.mode === "error" && (
                         <button
                           className="u-text-button"
@@ -348,7 +444,8 @@ export default function Chat({
             ))}
             {busy && (
               <div className="u-working" role="status">
-                Waraqa prépare la réponse…
+                {steps.length ? steps[steps.length - 1] + "…" : "Waraqa prépare la réponse…"}
+                {steps.length > 1 && <small> ({steps.length} étapes)</small>}
               </div>
             )}
           </div>
@@ -434,12 +531,33 @@ export default function Chat({
             </div>
             <p className="u-chat-disclaimer">
               {mode === "live"
-                ? "Les réponses IA nécessitent votre contrôle."
+                ? "Les réponses IA nécessitent votre contrôle. Les données utiles sont envoyées à Anthropic uniquement pendant la réponse."
                 : "Sans clé, les réponses sont des analyses déterministes, pas une conversation IA libre."}
             </p>
           </div>
         </section>
       </div>
+      {confirm && (
+        <Modal title="Confirmer le rapprochement proposé ?" close={() => setConfirm(null)}>
+          <p>
+            Paiement <b>#{confirm.paymentId}</b> → facture <b>#{confirm.invoiceId}</b> pour <b>{money(confirm.montant)} MAD</b>.
+          </p>
+          {confirm.justification && <p className="u-info">{confirm.justification}</p>}
+          <p>Les contrôles habituels du serveur s’appliquent ; la ligne devra être revue à nouveau.</p>
+          <button
+            className="primary"
+            onClick={() =>
+              run(async () => {
+                await api("/workspace/reconciliation", "POST", { paymentId: confirm.paymentId, invoiceId: confirm.invoiceId, amount: confirm.montant });
+                setConfirm(null);
+                await refresh();
+              }, "Rapprochement enregistré")
+            }
+          >
+            Confirmer le rapprochement
+          </button>
+        </Modal>
+      )}
       {rename && (
         <Modal title="Renommer la discussion" close={() => setRename(false)}>
           <form

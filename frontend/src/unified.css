@@ -1312,3 +1312,57 @@ pre {
   .u-period { min-width: 0; gap: 0; }
   .u-period input { min-width: 0; width: 138px; max-width: 100%; }
 }
+
+/* ─── IA connectée : discussion, actions proposées, réglages (4.2) ─── */
+.u-chat-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.u-budget { font-size: 11px; color: #5f6b52; background: #f1f4ec; border: 1px solid #e1e7d8; padding: 5px 10px; border-radius: 20px; white-space: nowrap; }
+.u-budget.warn { color: #8a5a12; background: #fff6e2; border-color: #f0dca8; }
+.u-message-md { white-space: normal; line-height: 1.7; }
+.u-md > * + * { margin-top: 10px; }
+.u-md p { margin: 0; }
+.u-md .u-md-h { font-size: 14px; font-weight: 650; color: #233d35; margin: 14px 0 4px; letter-spacing: -0.2px; }
+.u-md h2.u-md-h { font-size: 15px; }
+.u-md ul, .u-md ol { margin: 0; padding-left: 20px; }
+.u-md li + li { margin-top: 4px; }
+.u-md code { background: #eef2ea; padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
+.u-md pre { background: #f4f6f1; padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 11px; }
+.u-md blockquote { margin: 0; border-left: 3px solid #d3ad4c; padding: 4px 12px; color: #646944; background: #fbf9f0; }
+.u-md hr { border: 0; border-top: 1px solid #e6ebe2; }
+.u-md-ref { font-weight: 600; color: #186b55; }
+.u-md-table { overflow-x: auto; max-width: 100%; }
+.u-md-table table { border-collapse: collapse; font-size: 11px; min-width: 100%; }
+.u-md-table th, .u-md-table td { border-bottom: 1px solid #e6ebe2; padding: 7px 10px; text-align: left; vertical-align: top; }
+.u-md-table th { background: #f4f6f1; font-weight: 600; color: #3d4a35; white-space: nowrap; }
+.u-ai-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 14px; padding: 12px; background: #f7f8f2; border: 1px dashed #d6dccb; border-radius: 10px; }
+.u-ai-actions > small { flex-basis: 100%; font-size: 10px; color: #7c896c; }
+.u-ai-actions button { max-width: 100%; white-space: normal; text-align: left; }
+.u-sources { margin-top: 10px; font-size: 11px; color: #6b7760; }
+.u-sources summary { cursor: pointer; font-size: 10px; color: #7c896c; }
+.u-sources ul { margin: 6px 0 0; padding-left: 18px; }
+.u-usage { display: block; margin-top: 8px; font-size: 10px; color: #8b967d; }
+.u-working small { color: #aab09c; }
+.u-ai-card { border: 1px solid #e3e8df; border-radius: 12px; padding: 18px; margin: 14px 0 22px; background: #fbfcf9; }
+.u-ai-card > header { display: flex; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
+.u-ai-card > header small { display: block; color: #7c896c; margin-top: 3px; font-size: 12px; overflow-wrap: anywhere; }
+.u-dot { width: 10px; height: 10px; border-radius: 50%; background: #d0d5c8; margin-top: 5px; flex-shrink: 0; }
+.u-dot.ok { background: #2f8f5b; box-shadow: 0 0 0 4px #e1f2e7; }
+.u-key-form .u-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.u-key-form .u-text-button { align-self: flex-start; font-size: 11px; }
+.u-success { background: #edf7f0; color: #1f6a43; border: 1px solid #c8e6d3; padding: 12px; border-radius: 8px; }
+.u-ai-card .u-alert { flex-wrap: wrap; margin: 14px 0 0; }
+.u-ai-usage { margin-top: 26px; border-top: 1px solid #edf0ee; padding-top: 18px; font-size: 12px; color: #4f5a47; }
+.u-ai-usage h3 { font-size: 14px; margin: 0 0 10px; }
+.u-ai-usage ul { margin: 6px 0; padding-left: 18px; }
+.u-ai-usage small { display: block; color: #8b967d; margin-top: 8px; line-height: 1.5; }
+.u-ai-meter { height: 8px; background: #e6ecdf; border-radius: 6px; overflow: hidden; margin-bottom: 8px; }
+.u-ai-meter i { display: block; height: 100%; background: #688757; }
+@media (max-width: 600px) {
+  .u-chat-status { justify-content: flex-start; }
+  .u-snapshot button { flex: 1 1 auto; }
+}
+.u-activate { margin-top: 12px; }
+.u-form label.u-ai-check { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; text-align: left; line-height: 1.5; }
+.u-form label.u-ai-check input { width: 16px; height: 16px; min-height: 0; padding: 0; margin: 2px 0 0; flex-shrink: 0; }
+.u-md ul { list-style: disc; }
+.u-md ol { list-style: decimal; }
+.u-md li { display: list-item; }

@@ -1,5 +1,6 @@
 import Integrations from "./Integrations";
 import TwoFactor from "./TwoFactor";
+import AiSettings from "./AiSettings";
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import { Modal, PageHead, type Run } from "./App";
@@ -66,7 +67,7 @@ export default function Settings({
     <>
       <PageHead
         title="Un espace à votre mesure."
-        subtitle="Les réglages sont enregistrés sur le serveur. La clé API peut être ajoutée plus tard."
+        subtitle="Les réglages sont enregistrés sur le serveur. La clé API s’ajoute dans l’onglet Assistant IA."
       />
       <div className="settings-layout">
         <aside className="settings-nav">
@@ -98,46 +99,7 @@ export default function Settings({
             </>
           )}
           {tab === "ai" && (
-            <>
-              <h2>Assistant & extraction</h2>
-              <div className="u-info">
-                {form.ai.keyConfigured
-                  ? "Une clé est présente côté serveur. Vous pouvez activer le mode connecté."
-                  : "Aucune clé nécessaire pour la démo. Demain : renseignez ANTHROPIC_API_KEY dans backend/.env, redémarrez, puis activez le mode connecté."}
-              </div>
-              <div className="u-form">
-                <label>
-                  Mode
-                  <select
-                    disabled={!admin}
-                    value={form.ai.mode}
-                    onChange={(e) => set("ai", "mode", e.target.value)}
-                  >
-                    <option value="demo">
-                      Démo — analyses locales, aucun appel externe
-                    </option>
-                    <option value="live" disabled={!form.ai.keyConfigured}>
-                      Connecté — Anthropic Claude
-                    </option>
-                  </select>
-                </label>
-                {field("ai", "model", "Identifiant du modèle Anthropic")}
-                <label>
-                  Instructions de l’assistant
-                  <textarea
-                    rows={6}
-                    disabled={!admin}
-                    value={form.ai.instructions}
-                    onChange={(e) => set("ai", "instructions", e.target.value)}
-                  />
-                </label>
-              </div>
-              <p>
-                La clé reste dans l’environnement serveur. Elle n’est jamais
-                envoyée au navigateur. Le modèle est configurable ; aucun appel
-                payant n’est effectué en mode démo.
-              </p>
-            </>
+            <AiSettings form={form} set={set} admin={admin} run={run} refresh={refresh} />
           )}
           {tab === "preferences" && (
             <>

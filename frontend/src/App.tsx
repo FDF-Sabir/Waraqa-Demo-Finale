@@ -599,6 +599,10 @@ export default function App() {
               run={run}
               refresh={refresh}
               exportFile={exportFile}
+              openInvoice={async (id) => {
+                setDocumentId(undefined);
+                setEditing(await api<Invoice>("/factures/" + id));
+              }}
             />
           )}
           {page === "dashboard" && (
@@ -814,7 +818,7 @@ export default function App() {
             Waraqa · Démo unifiée ·{" "}
             {settings?.ai.mode === "live"
               ? "IA connectée"
-              : "IA simulée, analyses locales"}{" "}
+              : "Mode démo : analyses locales sans IA externe"}{" "}
             · Données conservées sur cette installation
           </footer>
         </main>
