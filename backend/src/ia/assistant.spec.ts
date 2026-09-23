@@ -218,6 +218,16 @@ describe('Assistant comptable connecté (outils en lecture seule)', () => {
     });
   });
 
+  it('signale honnêtement un bouton annoncé mais jamais proposé', async () => {
+    const create = jest.fn(async () => ({ stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text: 'Cliquez sur le bouton ci-dessous pour créer le snapshot.' }] }));
+    const r = await runAssistant({
+      gateway: new IaGateway('test-only', { messages: { create } } as any), model: 'm', effort: 'low',
+      tools: new AssistantTools(host(rows) as any, '2026-09'), system: [], messages: [{ role: 'user', content: 'snapshot' }],
+      beforeCall: async () => undefined, onUsage: async () => undefined,
+    });
+    expect(r.text).toContain('Aucun bouton n’a été préparé');
+  });
+
   it('s’arrête à la limite d’étapes et le signale', async () => {
     const create = jest.fn(async () => ({ stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'tool_use', id: 'x' + Math.random(), name: 'synthese_mois', input: {} }] }));
     const r = await runAssistant({

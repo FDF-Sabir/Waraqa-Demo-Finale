@@ -49,6 +49,11 @@ const nav: { id: Page; label: string; icon: any }[] = [
   { id: "journal", label: "Journal d’activité", icon: "clock" },
   { id: "reglages", label: "Réglages", icon: "settings" },
 ];
+/** Libellés comptables des champs Tableau5 (jamais le nom technique à l'écran). */
+export const FIELD_LABELS: Record<string, string> = {
+  factNum: "N° facture", designation: "désignation", libFrss: "fournisseur", iceFrs: "ICE fournisseur", iff: "IF fournisseur",
+  mTtc: "montant TTC", taux: "taux", idPaie: "mode de paiement", datePaie: "date de paiement", dateFac: "date de facture",
+};
 export function PageHead({
   eyebrow,
   title,
@@ -722,19 +727,22 @@ export default function App() {
                 title="Votre mois, en un regard."
                 subtitle={`Suivi de ${settings?.company.name || "votre entreprise"} · Période ${month}`}
               >
-                <button
-                  className="secondary"
-                  onClick={() =>
-                    run(
-                      () =>
-                        api("/workspace/seed", "POST", { month }).then(refresh),
-                      "Exemples chargés",
-                    )
-                  }
-                  disabled={user.role !== "admin"}
-                >
-                  Charger les exemples
-                </button>
+                {/* Profil en ligne : les exemples fictifs ne sont proposés que sur une période vide, jamais mêlés au dossier réel. */}
+                {(settings?.ai.profile !== "online" || rows.length === 0) && (
+                  <button
+                    className="secondary"
+                    onClick={() =>
+                      run(
+                        () =>
+                          api("/workspace/seed", "POST", { month }).then(refresh),
+                        "Exemples chargés",
+                      )
+                    }
+                    disabled={user.role !== "admin"}
+                  >
+                    Charger les exemples
+                  </button>
+                )}
                 <button className="primary" onClick={() => go("import")}>
                   <Icon name="plus" size={17} />
                   Importer
@@ -1058,7 +1066,7 @@ export function InvoiceTable({
                 </Status>
                 {f.vigilanceRenforcee && <small>Vigilance douane</small>}
                 {f.champsManquants?.length ? (
-                  <small>Manque : {f.champsManquants.join(", ")}</small>
+                  <small>Manque : {f.champsManquants.map((c) => FIELD_LABELS[c] || c).join(", ")}</small>
                 ) : null}
               </td>
               {edit && (
@@ -1349,7 +1357,7 @@ function InvoiceForm({
           </label>
           <label>Facture source de l’avoir (ID)<input type="number" min="1" value={form.creditOf || ''} disabled={Boolean(invoice)} onChange={e => set('creditOf',e.target.value)} /><small>Avoir : montant négatif, source obligatoire.</small></label>
           <label>Période comptable (repère)<input type="month" value={form.accountingMonth || ''} onChange={e=>set('accountingMonth',e.target.value)} /></label>
-          <label>Période fiscale proposée — à vérifier<input type="month" value={form.fiscalMonth || ''} onChange={e=>set('fiscalMonth',e.target.value)} /><small>Ne change pas le rattachement historique par date de paiement ou facture.</small></label>
+          <label>Période de déclaration (relevé de déduction)<input type="month" value={form.fiscalMonth || ''} onChange={e=>set('fiscalMonth',e.target.value)} /><small>Vide : mois du paiement (régime de l’encaissement) ou de la facture (régime des débits). À renseigner pour déclarer un paiement antérieur (délai d’un an).</small></label>
           <label>
             N° de facture
             <input
@@ -1522,7 +1530,8 @@ function Imports({
     [details, setDetails] = useState<RecordItem | null>(null),
     [lots, setLots] = useState<RecordItem[]>([]),
     [link, setLink] = useState(""),
-    [needsRead, setNeedsRead] = useState(false);
+    [needsRead, setNeedsRead] = useState(false),
+    [docLimit, setDocLimit] = useState(100);
   const running = lots.some((l) => l.data.status === "en_cours");
   useEffect(() => {
     api<RecordItem[]>("/workspace/imports").then(setLots).catch(() => undefined);
@@ -1751,7 +1760,7 @@ function Imports({
                 </tr>
               </thead>
               <tbody>
-                {docs.map((d) => (
+                {docs.slice(0, docLimit).map((d) => (
                   <tr key={d.id}>
                     <td>
                       <b>{d.data.name}</b>
@@ -1820,6 +1829,11 @@ function Imports({
                 ))}
               </tbody>
             </table>
+            {docs.length > docLimit && (
+              <button className="secondary small" onClick={() => setDocLimit(docLimit + 100)}>
+                Afficher 100 pièces de plus ({docs.length - docLimit} restantes)
+              </button>
+            )}
           </div>
         )}
       </section>
@@ -2318,7 +2332,10 @@ function Exports({
 }
 function Journal({ run }: { run: Run }) {
   const [events, setEvents] = useState<any[]>([]),
-    [query, setQuery] = useState("");
+    [query, setQuery] = useState(""),
+    [limit, setLimit] = useState(200);
+  // Recherche sur tout l'historique, affichage par tranches (une année d'imports = des milliers d'actions).
+  const matching = events.filter((e) => JSON.stringify(e).toLowerCase().includes(query.toLowerCase()));
   useEffect(() => {
     run(async () => setEvents((await api("/journal")).reverse()));
   }, []);
@@ -2333,12 +2350,13 @@ function Journal({ run }: { run: Run }) {
           placeholder="Rechercher une action, un auteur, un identifiant…"
           aria-label="Rechercher dans le journal"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setLimit(200);
+          }}
         />
-        {events
-          .filter((e) =>
-            JSON.stringify(e).toLowerCase().includes(query.toLowerCase()),
-          )
+        {matching
+          .slice(0, limit)
           .map((e) => (
             <div className="u-event" key={e.id}>
               <div className="u-event-icon">
@@ -2368,6 +2386,11 @@ function Journal({ run }: { run: Run }) {
               <time>{new Date(e.horodatage).toLocaleString("fr-FR")}</time>
             </div>
           ))}
+        {matching.length > limit && (
+          <button className="secondary small" onClick={() => setLimit(limit + 200)}>
+            Afficher 200 actions de plus ({matching.length - limit} restantes)
+          </button>
+        )}
         {!events.length && (
           <Empty text="Les premières actions apparaîtront ici." />
         )}

@@ -201,6 +201,7 @@ export const ASSISTANT_RULES = `Tu es Waraqa, l’assistant du comptable de l’
 - ID_PAIE (idPaie) est le mode de paiement DGI : 1 espèces, 2 chèque, 3 prélèvement, 4 virement, 5 effet, 6 compensation, 7 autres.
 - Taux de TVA acceptés par l’application : 0 %, 7 %, 10 %, 14 %, 20 %.
 - Relevé de déduction (déclaration TVA) : appelle releve_deduction. Seules les lignes revues et conformes y figurent ; explique chaque ligne écartée par sa raison et propose de l’ouvrir (ouvrir_ligne). Pour le dépôt SIMPL, propose exporter au format releve-xml (et releve-xlsx pour le modèle Excel DGI). Dans ton texte, nomme-les « fichier XML SIMPL » et « Excel modèle DGI », jamais par leur code technique.
+- Parle comme un comptable : jamais de nom technique (scope, reviewed, factNum, iceFrs, nom d’outil ou de format) ; dis « lignes revues », « N° de facture », « ICE », « fichier XML SIMPL ».
 - Quand tu cites un nombre de lignes, compte exactement les identifiants que tu donnes (ou reprends le total de l’outil).
 - Imports d’un dossier (ZIP ou lien Google Drive) : appelle imports pour l’avancement et les erreurs par fichier.
 
@@ -208,6 +209,7 @@ export const ASSISTANT_RULES = `Tu es Waraqa, l’assistant du comptable de l’
 - Quand l’utilisateur demande une action (valider, rattacher, clôturer, importer un dossier Drive, créer un snapshot, confirmer une désignation, archiver, rapprocher, télécharger dans un format), vérifie d’abord avec les outils puis propose le ou les boutons correspondants avec proposer_action, en groupant (valider_lignes plutôt que dix valider_ligne).
 - Pour un téléchargement, propose un bouton par format demandé. Si le format demandé n’existe pas (ex. Word), dis-le et propose le plus proche (PDF, Excel, CSV ou JSON).
 - N’annonce jamais qu’une action a été faite : écris « cliquez sur … pour … ». Le serveur refusera au clic ce qui n’est pas permis.
+- Ne mentionne un bouton que si tu as effectivement appelé proposer_action dans cette réponse et qu’il a été accepté ; sinon appelle-le d’abord.
 - Pour une pièce déjà importée, utilise lire_piece plutôt que de demander de la rejoindre.
 
 ## Limites
@@ -577,6 +579,9 @@ export async function runAssistant(input: AssistantRunInput) {
     if (step === maxSteps - 1) truncated = true;
   }
   let lastText = parts.filter((p, i) => i === parts.length - 1 || p.length >= 200).join('\n\n');
+  // Filet de sécurité : ne jamais laisser croire à un bouton qui n'a pas été préparé.
+  if (lastText && !input.tools.actions.length && /\bboutons?\b|cliquez/i.test(lastText))
+    lastText += '\n\n_Aucun bouton n’a été préparé pour cette réponse : redemandez l’action (par exemple « propose le bouton pour … »)._';
   if (!lastText) lastText = 'Je n’ai pas pu terminer l’analyse dans la limite d’étapes. Posez une question plus ciblée (un mois, un fournisseur, une ligne).';
   return { text: lastText, truncated };
 }
