@@ -1,4 +1,4 @@
-import { BadGatewayException, BadRequestException, ForbiddenException, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, ConflictException, ForbiddenException, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { randomBytes, createHash } from 'crypto';
@@ -19,6 +19,21 @@ const DRIVE = 'https://www.googleapis.com/drive/v3';
 const UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
 const FOLDER = 'application/vnd.google-apps.folder';
 const SCOPES = 'openid email https://www.googleapis.com/auth/drive.file';
+/** Lecture des dossiers remis par le comptable (import par lien) : demandée seulement à la première utilisation. */
+const READONLY = 'https://www.googleapis.com/auth/drive.readonly';
+const IMPORTABLE = ['.pdf', '.png', '.jpg', '.jpeg', '.xlsx', '.xls', '.csv', '.json'];
+const GOOGLE_EXPORT: Record<string, [string, string]> = {
+  'application/vnd.google-apps.spreadsheet': ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'],
+  'application/vnd.google-apps.document': ['application/pdf', '.pdf'],
+};
+export interface DriveInputFile { id: string; name: string; path: string; mimeType: string; size: number }
+
+/** Identifiant de dossier ou de fichier depuis un lien Google Drive (ou l'identifiant seul). */
+export function driveIdFromLink(link: string) {
+  const s = link.trim();
+  const m = /\/folders\/([A-Za-z0-9_-]{10,})/.exec(s) || /\/d\/([A-Za-z0-9_-]{10,})/.exec(s) || /[?&]id=([A-Za-z0-9_-]{10,})/.exec(s) || /^([A-Za-z0-9_-]{10,})$/.exec(s);
+  return m ? m[1] : null;
+}
 const CLIENT_ID = /^[0-9]{6,30}-[a-z0-9]{10,60}\.apps\.googleusercontent\.com$/;
 const CLIENT_SECRET = /^[A-Za-z0-9_-]{10,100}$/;
 const MAX_ATTEMPTS = 8;
@@ -120,6 +135,13 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     return this.status(u);
   }
 
+  /** Résumé Drive sans détail sensible, lisible par tout utilisateur connecté (écran de mise en service). */
+  async summary() {
+    const token = await this.records.findOneBy({ id: 'drive-token' });
+    const state = await this.state();
+    return { configured: this.configured(), authorized: Boolean(token), needsReauth: Boolean(state.needsReauth), email: token?.data.email || null, canRead: await this.canRead() };
+  }
+
   async status(u: any) {
     await this.admin(u);
     const token = await this.records.findOneBy({ id: 'drive-token' });
@@ -154,13 +176,14 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ─── OAuth ──────────────────────────────────────────────────────────────────
-  async start(u: any) {
+  async start(u: any, opts: { readonly?: boolean } = {}) {
     await this.admin(u);
     if (!this.configured()) throw new BadRequestException('Enregistrez d’abord le Client ID et le Client secret Google (Réglages → Intégrations).');
     const state = randomBytes(32).toString('hex'), verifier = randomBytes(32).toString('base64url');
-    await this.records.save({ id: 'oauth-' + hash(state), kind: 'oauth_state', data: { userId: u.sub, sessionVersion: (await this.users.findOneBy({ id: u.sub }))!.sessionVersion, expires: Date.now() + 600000, verifier: protect(verifier, this.key()) } });
+    const readonly = Boolean(opts.readonly) || await this.canRead();
+    await this.records.save({ id: 'oauth-' + hash(state), kind: 'oauth_state', data: { userId: u.sub, sessionVersion: (await this.users.findOneBy({ id: u.sub }))!.sessionVersion, expires: Date.now() + 600000, verifier: protect(verifier, this.key()), returnTo: opts.readonly ? 'import' : 'reglages' } });
     const query = new URLSearchParams({
-      client_id: process.env.GOOGLE_CLIENT_ID!, redirect_uri: this.redirectUri(), response_type: 'code', scope: SCOPES,
+      client_id: process.env.GOOGLE_CLIENT_ID!, redirect_uri: this.redirectUri(), response_type: 'code', scope: SCOPES + (readonly ? ' ' + READONLY : ''),
       access_type: 'offline', prompt: 'consent', include_granted_scopes: 'false', state,
       code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256',
     });
@@ -204,7 +227,70 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
     await this.journal.ecrire({ action: 'drive_autorise', utilisateurId: owner.id, saisiPar: owner.nom, details: { compte: identity?.email || null } });
     await this.backfill();
     this.kick();
-    return { ok: true, email: identity?.email || null };
+    return { ok: true, email: identity?.email || null, returnTo: r.data.returnTo === 'import' ? 'import' : 'reglages', canRead: String(tokens.scope || '').includes('drive.readonly') };
+  }
+
+  // ─── Import depuis un dossier Drive (lien collé par le comptable) ───────────
+  private async tokens() {
+    const record = await this.records.findOneBy({ id: 'drive-token' });
+    if (!record) return null;
+    try { return JSON.parse(reveal(record.data.encrypted, this.key())); } catch { return null; }
+  }
+  /** Lecture des dossiers autorisée (portée drive.readonly accordée). */
+  async canRead() {
+    const t = await this.tokens();
+    return Boolean(t && /(^|\s)https:\/\/www\.googleapis\.com\/auth\/drive(\.readonly)?(\s|$)/.test(String(t.scope || '')));
+  }
+  /** Liste récursive des pièces importables d'un dossier (ou d'un fichier) Drive. */
+  async readFolder(link: string): Promise<{ name: string; files: DriveInputFile[]; skipped: { name: string; reason: string }[] }> {
+    const id = driveIdFromLink(link);
+    if (!id) throw new BadRequestException('Lien Google Drive non reconnu : copiez le lien du dossier (drive.google.com/drive/folders/…).');
+    if (!(await this.records.findOneBy({ id: 'drive-token' }))) throw new BadRequestException('Google Drive non connecté : un administrateur doit le connecter dans Réglages → Intégrations.');
+    if (!(await this.canRead())) throw new ConflictException({ statusCode: 409, code: 'drive_lecture_requise', message: 'Autorisez Waraqa à lire les dossiers Drive que vous lui indiquez (une seule fois), puis relancez l’import.' });
+    const fields = 'id,name,mimeType,size,shortcutDetails(targetId,targetMimeType)';
+    const get = async (fileId: string) => {
+      try { return await (await this.api(`${DRIVE}/files/${encodeURIComponent(fileId)}?` + new URLSearchParams({ fields, supportsAllDrives: 'true' }))).json() as any; }
+      catch (e) {
+        if (e instanceof DriveError && [403, 404].includes(e.status)) throw new BadRequestException('Dossier introuvable ou non partagé avec ' + (allowedGoogleEmail() || 'le compte Google connecté') + '.');
+        throw e;
+      }
+    };
+    const root = await get(id);
+    const files: DriveInputFile[] = [], skipped: { name: string; reason: string }[] = [];
+    const accept = (f: any, path: string) => {
+      const mime = f.shortcutDetails?.targetMimeType || f.mimeType;
+      const fileId = f.shortcutDetails?.targetId || f.id;
+      const ext = GOOGLE_EXPORT[mime]?.[1] || (/\.[^./]+$/.exec(f.name)?.[0] || '').toLowerCase();
+      if (!IMPORTABLE.includes(ext)) return skipped.push({ name: path, reason: 'Format non pris en charge' });
+      if (Number(f.size || 0) > 20 * 1024 * 1024) return skipped.push({ name: path, reason: 'Fichier supérieur à 20 Mo' });
+      files.push({ id: fileId, name: f.name, path: GOOGLE_EXPORT[mime] && !path.toLowerCase().endsWith(ext) ? path + ext : path, mimeType: mime, size: Number(f.size || 0) });
+    };
+    if (root.mimeType !== FOLDER) { accept(root, root.name); return { name: root.name, files, skipped }; }
+    const queue: { id: string; path: string; depth: number }[] = [{ id: root.id, path: '', depth: 0 }];
+    while (queue.length) {
+      const dir = queue.shift()!;
+      let pageToken = '';
+      do {
+        const page = await (await this.api(`${DRIVE}/files?` + new URLSearchParams({ q: `'${this.q(dir.id)}' in parents and trashed=false`, fields: `nextPageToken,files(${fields})`, pageSize: '1000', orderBy: 'folder,name', supportsAllDrives: 'true', includeItemsFromAllDrives: 'true', ...(pageToken ? { pageToken } : {}) }))).json() as any;
+        for (const f of page.files || []) {
+          const path = dir.path + f.name;
+          if (f.mimeType === FOLDER) { if (dir.depth < 6) queue.push({ id: f.id, path: path + '/', depth: dir.depth + 1 }); else skipped.push({ name: path, reason: 'Dossier trop profond' }); }
+          else accept(f, path);
+          if (files.length > 2000) throw new BadRequestException('Dossier trop fourni (2000 pièces maximum) : importez-le en plusieurs fois.');
+        }
+        pageToken = page.nextPageToken || '';
+      } while (pageToken);
+    }
+    return { name: root.name, files, skipped };
+  }
+  async download(f: DriveInputFile): Promise<Buffer> {
+    const exp = GOOGLE_EXPORT[f.mimeType];
+    const url = exp
+      ? `${DRIVE}/files/${encodeURIComponent(f.id)}/export?` + new URLSearchParams({ mimeType: exp[0] })
+      : `${DRIVE}/files/${encodeURIComponent(f.id)}?` + new URLSearchParams({ alt: 'media', supportsAllDrives: 'true' });
+    const buffer = Buffer.from(await (await this.api(url, {}, 300000)).arrayBuffer());
+    if (buffer.length > 20 * 1024 * 1024) throw new BadRequestException('Fichier supérieur à 20 Mo.');
+    return buffer;
   }
 
   private async revoke(token?: string) {

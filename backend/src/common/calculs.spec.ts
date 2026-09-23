@@ -137,6 +137,18 @@ describe('detecterDoublon', () => {
     expect(doublon?.id).toBe(3);
   });
 
+  it('commissions bancaires récurrentes (référence AVUE) : jamais des doublons', () => {
+    const commissions = [{ id: 7, factNum: 'AVUE', iceFrs: '001542240000068', mTtc: 16.5, designation: 'COMMISSION', dateFac: '2026-07-24' }];
+    expect(detecterDoublon({ factNum: 'AVUE', iceFrs: '001542240000068', mTtc: 16.5, designation: 'COMMISSION', dateFac: '2026-07-24' }, commissions)).toBeNull();
+  });
+
+  it('deux dates de facture différentes : pièces distinctes ; date absente : doublon maintenu', () => {
+    const datees = [{ id: 8, factNum: 'F-9', iceFrs: '001234567000012', mTtc: 100, dateFac: '2026-07-01' }];
+    expect(detecterDoublon({ factNum: 'F-9', iceFrs: '001234567000012', mTtc: 100, dateFac: '2026-08-01' }, datees)).toBeNull();
+    expect(detecterDoublon({ factNum: 'F-9', iceFrs: '001234567000012', mTtc: 100, dateFac: '2026-07-01' }, datees)?.id).toBe(8);
+    expect(detecterDoublon({ factNum: 'F-9', iceFrs: '001234567000012', mTtc: 100 }, datees)?.id).toBe(8);
+  });
+
   it('est insensible à la casse sur factNum', () => {
     const doublon = detecterDoublon(
       { factNum: 'f-2026-001', iceFrs: '001234567000012', mTtc: 1200 },

@@ -5,6 +5,9 @@ import { apiKey, cost, KEY_PATTERN, maskedKey, MODEL_PRESETS, workspaceId, write
 import { ASSISTANT_RULES, AssistantTools, runAssistant } from "../ia/assistant";
 import { onlineProfile, profile } from "../common/profile";
 import { IntegrationsService } from "./integrations.service";
+import { aliasFor, readSheetRows, toIsoDate } from "./table-import";
+import { construireReleve, releveXlsx, releveXml, ReleveHeader } from "./releve";
+import { extractZip } from "./archive-import";
 import {
   BadRequestException,
   ConflictException,
@@ -78,6 +81,7 @@ const defaults = {
     name: "Finder Electronic Morocco",
     ice: "",
     iff: "",
+    regime: 1,
     city: "Casablanca",
     address: "",
   },
@@ -166,6 +170,9 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
   ) {}
   async onModuleInit() {
     await mkdir(this.storage, { recursive: true });
+    // Lots interrompus par un arrêt du serveur : signalés, les pièces déjà traitées restent acquises.
+    for (const lot of await this.records.findBy({ kind: "import_lot" }))
+      if (lot.data.status === "en_cours") { lot.data.status = "interrompu"; await this.records.save(lot); }
     if (!(await this.records.findOneBy({ id: "settings" })))
       await this.save("settings", "settings", defaults);
     for (let i = 0; i < builtinTemplates.length; i++)
@@ -255,6 +262,23 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       aiLive: settings.ai.mode === "live",
     };
   }
+  private internet = { ok: false, at: 0 };
+  /** Accès Internet vers les services utilisés (Anthropic, Google), vérifié au plus une fois par minute. */
+  private async online() {
+    if (process.env.NODE_ENV === "test") return true;
+    if (Date.now() - this.internet.at < 60_000) return this.internet.ok;
+    const reach = (url: string) => fetch(url, { method: "HEAD", signal: AbortSignal.timeout(4000) }).then(() => true, () => false);
+    const [a, g] = await Promise.all([reach("https://api.anthropic.com"), reach("https://www.googleapis.com")]);
+    this.internet = { ok: a && g, at: Date.now() };
+    return this.internet.ok;
+  }
+  /** État de mise en service (profil en ligne) : Internet, IA Claude, Google Drive. */
+  async readiness() {
+    const [internet, drive] = await Promise.all([this.online(), this.drive.summary()]);
+    const ai = { keyConfigured: Boolean(apiKey()), live: (await this.settings()).ai.mode === "live" };
+    const ready = !onlineProfile() || (ai.keyConfigured && drive.authorized && !drive.needsReauth);
+    return { profile: profile(), ready, internet, ai, drive };
+  }
   /** En profil en ligne, une clé présente impose le mode connecté (aucune bascule manuelle). */
   private aiLocked() {
     return onlineProfile() && Boolean(apiKey());
@@ -312,6 +336,10 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       !["normal", "compact", "comfortable"].includes(result.preferences.density)
     )
       throw new BadRequestException("Préférence invalide.");
+    if (![1, 2].includes(result.company.regime))
+      throw new BadRequestException("Régime TVA : 1 (encaissement) ou 2 (débits).");
+    if (result.company.iff && !/^\d{1,10}$/.test(String(result.company.iff).trim()))
+      throw new BadRequestException("Identifiant fiscal (IF) : chiffres uniquement.");
     try { new Intl.DateTimeFormat('fr-FR', {timeZone:result.integrations.timeZone}).format(); } catch { throw new BadRequestException('Fuseau horaire invalide.'); }
     if (!Number.isInteger(result.integrations.catchUpDays) || result.integrations.catchUpDays<0 || result.integrations.catchUpDays>7) throw new BadRequestException('Rattrapage : 0 à 7 jours.');
     if (!Number.isInteger(result.integrations.driveBackupKeep) || result.integrations.driveBackupKeep < 1 || result.integrations.driveBackupKeep > 90)
@@ -530,7 +558,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     await this.records.delete(id);
     return { ok: true };
   }
-  async upload(file: Express.Multer.File, user: any, preview = false) {
+  async upload(file: Express.Multer.File, user: any, preview = false, reuse = false) {
     if (!file) throw new BadRequestException("Fichier requis.");
     if (this.importing)
       throw new ConflictException(
@@ -538,12 +566,73 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       );
     this.importing = true;
     try {
-      return await this.uploadInternal(file, user, preview);
+      return await this.uploadInternal(file, user, preview, { reuse });
     } finally {
       this.importing = false;
     }
   }
-  private async uploadInternal(file: Express.Multer.File, user: any, preview = false) {
+  private async withImportLock<T>(fn: () => Promise<T>) {
+    while (this.importing) await new Promise((r) => setTimeout(r, 250));
+    this.importing = true;
+    try { return await fn(); } finally { this.importing = false; }
+  }
+  // ─── Import en lot : dossier ZIP ou dossier Google Drive ─────────────────────
+  private lotQueue: Promise<unknown> = Promise.resolve();
+  async importZip(file: Express.Multer.File, user: any) {
+    if (!file) throw new BadRequestException("Fichier requis.");
+    if (extname(file.originalname).toLowerCase() !== ".zip") throw new BadRequestException("Dossier compressé .zip attendu.");
+    let archive;
+    try { archive = extractZip(file.buffer); } catch (e: any) { throw new BadRequestException(e.message); }
+    if (!archive.entries.length) throw new BadRequestException("Aucune pièce exploitable dans l’archive (PDF, images, Excel, CSV, JSON).");
+    return this.startLot("zip", file.originalname, archive.entries.map((e) => ({ name: e.name, load: async () => e.buffer })), archive.skipped, user);
+  }
+  async importDriveFolder(link: unknown, user: any) {
+    if (typeof link !== "string" || link.length > 2000) throw new BadRequestException("Lien Google Drive requis.");
+    const folder = await this.drive.readFolder(link);
+    if (!folder.files.length) throw new BadRequestException(`Aucune pièce exploitable dans « ${folder.name} » (PDF, images, Excel, CSV, JSON, Google Sheets).`);
+    return this.startLot("drive", folder.name, folder.files.map((f) => ({ name: f.path, load: () => this.drive.download(f) })), folder.skipped, user, { skipDrive: true });
+  }
+  private async startLot(source: "zip" | "drive", label: string, items: { name: string; load: () => Promise<Buffer> }[], skipped: { name: string; reason: string }[], user: any, opts: { skipDrive?: boolean } = {}) {
+    const id = "lot-" + randomUUID();
+    const lot = {
+      source, label, createdAt: now(), author: user.nom, authorId: user.sub, status: "en_cours", total: items.length, processed: 0,
+      items: items.map((i) => ({ name: i.name, state: "en_attente" as string, documentId: null as string | null, lines: 0, error: null as string | null })),
+      skipped,
+    };
+    await this.save(id, "import_lot", lot);
+    await this.journal.ecrire({ action: "lot_import_lance", ...this.actor(user), details: { lot: id, source, label, pieces: items.length, ignores: skipped.length } });
+    this.lotQueue = this.lotQueue.then(() => this.runLot(id, items, user, opts)).catch(() => undefined);
+    return this.get(id, "import_lot");
+  }
+  private async runLot(id: string, items: { name: string; load: () => Promise<Buffer> }[], user: any, opts: { skipDrive?: boolean }) {
+    const rec = await this.get(id, "import_lot");
+    const lot = rec.data;
+    for (let i = 0; i < items.length; i++) {
+      const item = lot.items[i];
+      item.state = "en_cours";
+      await this.save(id, "import_lot", lot);
+      try {
+        const buffer = await items[i].load();
+        const doc = await this.withImportLock(() => this.uploadInternal({ originalname: items[i].name, buffer, size: buffer.length } as Express.Multer.File, user, false, { skipDrive: opts.skipDrive, lot: id }));
+        item.documentId = doc.id; item.state = doc.data.status; item.lines = doc.data.invoiceIds.length;
+        item.error = doc.data.errors?.[0] || null;
+      } catch (e: any) {
+        item.state = e instanceof ConflictException ? "deja_importe" : "erreur";
+        item.error = e?.getStatus || e instanceof Error ? String(e.message).slice(0, 300) : "Import impossible.";
+      }
+      lot.processed = i + 1;
+      await this.save(id, "import_lot", lot);
+    }
+    lot.status = "termine";
+    lot.finishedAt = now();
+    lot.lines = lot.items.reduce((n: number, x: any) => n + x.lines, 0);
+    await this.save(id, "import_lot", lot);
+    await this.journal.ecrire({ action: "lot_importe", ...this.actor(user), details: { lot: id, pieces: lot.total, lignes: lot.lines, erreurs: lot.items.filter((x: any) => ["erreur", "partiel"].includes(x.state)).length }, notifiable: true });
+  }
+  async lots() {
+    return (await this.list("import_lot")).sort((a, b) => b.data.createdAt.localeCompare(a.data.createdAt)).slice(0, 30);
+  }
+  private async uploadInternal(file: Express.Multer.File, user: any, preview = false, opts: { reuse?: boolean; skipDrive?: boolean; lot?: string } = {}) {
     const ext = extname(file.originalname).toLowerCase();
     if (
       ![
@@ -566,6 +655,15 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     const previous = (await this.list("document")).find(
       (x) => x.data.hash === hash,
     );
+    if (previous && opts.reuse) {
+      // Pièce déjà connue (ex. jointe à nouveau dans la discussion) : réutilisée ; un fichier
+      // structuré resté sans ligne (ancien format non reconnu) est relu avec le lecteur actuel.
+      if ([".csv", ".xls", ".xlsx", ".json"].includes(previous.data.ext) && !previous.data.invoiceIds.length && !preview) {
+        await this.records.delete("import-lines-" + previous.id);
+        return this.processDocument(previous.id, user);
+      }
+      return previous;
+    }
     if (previous)
       throw new ConflictException(
         `Document déjà importé : ${previous.data.name}`,
@@ -586,9 +684,10 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       authorId: user.sub,
       invoiceIds: [],
       errors: [],
+      ...(opts.lot ? { lot: opts.lot } : {}),
     };
     await this.save(id, "document", document);
-    await this.drive.enqueueSafe("document", id, file.originalname, document.createdAt.slice(0, 7));
+    if (!opts.skipDrive) await this.drive.enqueueSafe("document", id, file.originalname, document.createdAt.slice(0, 7));
     return this.processDocument(id, user, preview);
   }
   async cancelImport(id: string) {
@@ -619,8 +718,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
   }
   private tableColumns(buffer: Buffer, ext: string): string[] {
     if (ext === '.json') { const value = JSON.parse(buffer.toString()); return Object.keys((Array.isArray(value) ? value : value.lignes)[0] || {}); }
-    const wb = XLSX.read(buffer, { type: 'buffer', raw: true });
-    return Object.keys((XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames.includes('EDI') ? 'EDI' : wb.SheetNames[0]])[0] || {}) as object);
+    return readSheetRows(buffer, (h) => Boolean(aliasFor(h, fields))).headers;
   }
   private async validateImport(lines: any[]) {
     const errors: string[] = [];
@@ -714,45 +812,13 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       if (!Array.isArray(rows))
         throw new Error("JSON : tableau de lignes attendu.");
     } else {
-      const workbook = XLSX.read(buffer, {
-        type: "buffer",
-        raw: true,
-        cellDates: true,
-      });
-      const sheet =
-        workbook.Sheets[
-          workbook.SheetNames.includes("EDI") ? "EDI" : workbook.SheetNames[0]
-        ];
-      rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+      rows = readSheetRows(buffer, (h) => h in mapping ? Boolean(mapping[h]) : Boolean(aliasFor(h, fields))).rows;
     }
     if (rows.length > 10000) throw new Error("Maximum 10000 lignes par fichier.");
-    const aliases: Record<string, string> = {
-      FACT_NUM: "factNum",
-      NUMERO_FACTURE: "factNum",
-      DESIGNATION: "designation",
-      M_TTC: "mTtc",
-      TOTAL_TTC: "mTtc",
-      IF: "iff",
-      IF_FOURNISSEUR: "iff",
-      LIB_FRSS: "libFrss",
-      NOM_FOURNISSEUR: "libFrss",
-      ICE_FRS: "iceFrs",
-      ICE_FOURNISSEUR: "iceFrs",
-      TAUX: "taux",
-      TAUX_TVA: "taux",
-      ID_PAIE: "idPaie",
-      DATE_PAIE: "datePaie",
-      DATE_FAC: "dateFac",
-      DATE_FACTURE: "dateFac",
-      OR: "or",
-      SOUS_TYPE: "sousType",
-    };
     return rows.map((row) => {
       const r: any = {};
       for (const [key, value] of Object.entries(row)) {
-        const name = key in mapping ? mapping[key] :
-          aliases[key.toUpperCase()] ||
-          (fields.includes(key) ? key : key === "sousType" ? key : "");
+        const name = key in mapping ? mapping[key] : aliasFor(key, fields);
         if (
           !name ||
           ["mHt", "tva"].includes(name) ||
@@ -760,8 +826,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
           value === null
         )
           continue;
-        r[name] =
-          value instanceof Date ? value.toISOString().slice(0, 10) : value;
+        r[name] = ["dateFac", "datePaie"].includes(name) ? toIsoDate(value) : value;
       }
       for (const k of ["mTtc", "taux", "idPaie"])
         if (r[k] !== undefined) {
@@ -771,11 +836,13 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
           r[k] = Number(text.replace("%", ""));
           if (k === "taux" && (text.includes("%") || r[k] > 1)) r[k] /= 100;
         }
-      for (const k of ["iff", "iceFrs", "factNum", "or", "dateFac", "datePaie"])
-        if (r[k] !== undefined) r[k] = String(r[k]);
+      for (const k of ["iff", "iceFrs", "factNum", "or", "dateFac", "datePaie", "designation", "libFrss"])
+        if (r[k] !== undefined) r[k] = String(r[k]).replace(/\s+/g, " ").trim();
+      // ICE saisi comme nombre dans Excel : les zéros de tête perdus sont restitués (15 chiffres).
+      if (r.iceFrs && /^\d{12,14}$/.test(r.iceFrs)) r.iceFrs = r.iceFrs.padStart(15, "0");
       r.sousType = r.sousType || SousType.FACTURE_FOURNISSEUR;
       return r;
-    });
+    }).filter((r) => Object.keys(r).some((k) => !["or", "sousType"].includes(k)));
   }
   async documentFile(id: string) {
     const d = await this.get(id, "document");
@@ -1052,6 +1119,82 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     await this.drive.enqueueExport(name, buffer, month);
     return { buffer, mime, name };
   }
+  // ─── Relevé de déduction (DGI, art. 112 CGI) ─────────────────────────────────
+  private async releveHeader(month: string): Promise<ReleveHeader> {
+    const c = (await this.settings()).company;
+    return { raisonSociale: String(c.name || "").trim(), identifiantFiscal: String(c.iff || "").trim(), annee: Number(month.slice(0, 4)), periode: Number(month.slice(5, 7)), regime: c.regime === 2 ? 2 : 1 };
+  }
+  async releve(month: string, scope: string, examples = false) {
+    if (!["all", "reviewed"].includes(scope || "reviewed")) throw new BadRequestException("Sélection invalide.");
+    const header = await this.releveHeader(month);
+    const r = construireReleve(await this.factures.lister(), month, header.regime, (scope || "reviewed") as any, examples);
+    const cloture = (await this.records.findOneBy({ id: "releve-cloture-" + month }))?.data || null;
+    return { header, entrepriseComplete: Boolean(header.raisonSociale) && /^\d{1,10}$/.test(header.identifiantFiscal), cloture, ...r };
+  }
+  async releveExport(month: string, format: string, scope: string, user: any, examples = false) {
+    if (!["xml", "xlsx", "pdf"].includes(format)) throw new BadRequestException("Format invalide.");
+    const r = await this.releve(month, scope, examples);
+    if (!r.entrepriseComplete) throw new BadRequestException("Renseignez la raison sociale et l’identifiant fiscal (IF) de l’entreprise dans Réglages → Entreprise.");
+    if (!r.lignes.length) throw new BadRequestException(`Aucune ligne conforme à déclarer pour ${month} : ${r.ecartees.length} ligne(s) écartée(s) à corriger ou à revoir.`);
+    const suffix = (scope === "all" ? "-BROUILLON" : "") + (examples ? "-EXEMPLES" : "");
+    let buffer: Buffer, name: string, mime: string;
+    if (format === "xml") {
+      buffer = Buffer.from(releveXml(r.header, r.lignes), "utf8");
+      name = `Releve-deduction-${month}${suffix}.xml`; mime = "application/xml; charset=utf-8";
+    } else if (format === "xlsx") {
+      buffer = releveXlsx(r.header, r.lignes);
+      name = `Releve-deduction-${month}${suffix}.xlsx`; mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    } else {
+      const ids = new Set(r.lignes.map((l) => l.id));
+      const rows = (await this.factures.lister()).filter((f) => ids.has(f.id)).sort((a, b) => r.lignes.findIndex((l) => l.id === a.id) - r.lignes.findIndex((l) => l.id === b.id));
+      const settings = await this.settings();
+      buffer = await archivePdf({ title: "Relevé de déduction — art. 112 CGI", createdAt: now(), month, company: settings.company, author: user.nom, rows, selection: `${r.header.regime === 1 ? "Régime de l’encaissement" : "Régime des débits"} · IF ${r.header.identifiantFiscal} · ${scope === "all" ? "BROUILLON — lignes non revues incluses" : "lignes revues et conformes"}`, totals: { totalHt: r.totaux.mHt, totalTva: r.totaux.tva, totalTtc: r.totaux.mTtc } });
+      name = `Releve-deduction-${month}${suffix}.pdf`; mime = "application/pdf";
+    }
+    await this.journal.ecrire({ action: "releve_genere", ...this.actor(user), details: { format, month, scope, lignes: r.lignes.length, ecartees: r.ecartees.length, tva: r.totaux.tva, ids: r.lignes.map((l) => l.id), sha256: createHash("sha256").update(buffer).digest("hex") } });
+    await this.drive.enqueueExport(name, buffer, month);
+    return { buffer, mime, name };
+  }
+  /** Rattache des lignes (déductions tardives, délai d'un an) à une période de déclaration. */
+  async releveAttach(ids: unknown, month: string, user: any) {
+    if (!Array.isArray(ids) || !ids.length || ids.length > 1000 || ids.some((x) => !Number.isInteger(x))) throw new BadRequestException("Lignes à rattacher invalides.");
+    if ((await this.records.findOneBy({ id: "releve-cloture-" + month }))) throw new ConflictException(`Relevé ${month} clôturé : rouvrez-le avant de le modifier.`);
+    for (const id of ids as number[]) {
+      const f = await this.factures.trouver(id);
+      if (f.fiscalMonth === month) continue;
+      await this.invoices.update(id, { fiscalMonth: month });
+      await this.journal.ecrire({ action: "ligne_rattachee_periode", factureId: id, ...this.actor(user), details: { avant: f.fiscalMonth || null, apres: month } });
+    }
+    return this.releve(month, "reviewed");
+  }
+  async releveDetach(id: number, user: any) {
+    const f = await this.factures.trouver(id);
+    if (f.fiscalMonth && (await this.records.findOneBy({ id: "releve-cloture-" + f.fiscalMonth }))) throw new ConflictException(`Relevé ${f.fiscalMonth} clôturé : rouvrez-le avant de le modifier.`);
+    await this.invoices.update(id, { fiscalMonth: null as any });
+    await this.journal.ecrire({ action: "ligne_detachee_periode", factureId: id, ...this.actor(user), details: { avant: f.fiscalMonth || null } });
+    return { ok: true };
+  }
+  /** Clôture : fige le rattachement des lignes déclarées (elles ne réapparaissent plus en report). */
+  async releveClose(month: string, user: any) {
+    await this.admin(user);
+    if ((await this.records.findOneBy({ id: "releve-cloture-" + month }))) throw new ConflictException(`Relevé ${month} déjà clôturé.`);
+    const r = await this.releve(month, "reviewed");
+    if (!r.entrepriseComplete) throw new BadRequestException("Renseignez la raison sociale et l’IF de l’entreprise avant de clôturer.");
+    if (!r.lignes.length) throw new BadRequestException("Aucune ligne conforme à clôturer.");
+    for (const l of r.lignes) if (l.fiscalMonth !== month) await this.invoices.update(l.id, { fiscalMonth: month });
+    const xmlHash = createHash("sha256").update(releveXml(r.header, r.lignes)).digest("hex");
+    await this.save("releve-cloture-" + month, "releve_cloture", { month, createdAt: now(), author: user.nom, ids: r.lignes.map((l) => l.id), totaux: r.totaux, ecartees: r.ecartees.length, xmlSha256: xmlHash });
+    await this.journal.ecrire({ action: "releve_cloture", ...this.actor(user), details: { month, lignes: r.lignes.length, tva: r.totaux.tva, xmlSha256: xmlHash } });
+    return this.releve(month, "reviewed");
+  }
+  async releveReopen(month: string, user: any) {
+    await this.admin(user);
+    const rec = await this.records.findOneBy({ id: "releve-cloture-" + month });
+    if (!rec) throw new NotFoundException("Relevé non clôturé.");
+    await this.records.delete(rec.id);
+    await this.journal.ecrire({ action: "releve_rouvert", ...this.actor(user), details: { month } });
+    return this.releve(month, "reviewed");
+  }
   private csvCell(value: any) {
     let s = String(value ?? "");
     if (/^[=+@\-\t\r]/.test(s)) s = "'" + s;
@@ -1192,6 +1335,8 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       journalFor: async (factureId?: number, limit = 20) =>
         (factureId ? await this.journal.listerParFacture(factureId) : await this.journal.listerTout()).slice(-limit).reverse(),
       bank: (f: FactureEntity) => this.bank(f),
+      releve: (m: string, scope: string) => this.releve(m, scope),
+      lots: () => this.lots(),
     };
   }
   /** Historique envoyé au modèle : alternance user/assistant, erreurs exclues, 20 messages maximum. */
@@ -1358,6 +1503,13 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
         result = await this.liveReply(id, c, text, ids, docs, settings, summary, Boolean(body.noCache));
         content = result.content;
         delete result.content;
+      } else if (onlineProfile()) {
+        // Profil en ligne : jamais de réponse préenregistrée. Tant que la clé manque, on le dit
+        // clairement ; le message reste conservé et « Réessayer » fonctionne dès la clé enregistrée.
+        mode = "error";
+        result = { type: "setup", missing: "anthropic_key" };
+        content =
+          "IA Claude non connectée : la mise en service n’est pas terminée. Un administrateur doit enregistrer la clé Anthropic dans Réglages → Assistant IA (activation immédiate, sans redémarrage). Votre message est conservé ; utilisez Réessayer ensuite.";
       } else {
         const rows = summary.rows,
           lower = text.toLowerCase();

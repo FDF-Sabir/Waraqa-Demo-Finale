@@ -20,6 +20,8 @@ const XLSX = require("../backend/node_modules/xlsx");
         ...process.env,
         NODE_ENV: "production",
         ANTHROPIC_API_KEY: "",
+        // Parcours historiques du mode démo (sans clé) : profil local explicite.
+        WARAQA_PROFILE: "local",
         WARAQA_JWT_SECRET: "ephemeral-integration-test-secret",
         WARAQA_DB_PATH: path.join(tmp, "test.sqlite"),
         WARAQA_FILES_PATH: path.join(tmp, "files"),

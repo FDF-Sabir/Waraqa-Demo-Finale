@@ -112,6 +112,22 @@ describe('Assistant comptable connecté (outils en lecture seule)', () => {
     expect(second.output_config).toEqual({ effort: 'medium' });
   });
 
+  it('conserve l’analyse rédigée avant un dernier appel d’outil, omet les courtes annonces', async () => {
+    const analyse = 'Relevé de juillet : 100 lignes retenues, TVA déductible 806 472,11 MAD. ' + 'Détail des lignes écartées et des contrôles DGI à corriger avant dépôt. '.repeat(3);
+    const steps = [
+      { stop_reason: 'tool_use', content: [{ type: 'text', text: 'Je consulte le relevé.' }, { type: 'tool_use', id: 'a', name: 'synthese_mois', input: {} }] },
+      { stop_reason: 'tool_use', content: [{ type: 'text', text: analyse }, { type: 'tool_use', id: 'b', name: 'proposer_action', input: { type: 'ouvrir_page', page: 'declaration', libelle: 'Ouvrir le relevé' } }] },
+      { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Le bouton ci-dessus ouvre le relevé.' }] },
+    ];
+    const create = jest.fn(async () => ({ usage: { input_tokens: 1, output_tokens: 1 }, ...steps.shift()! }));
+    const r = await runAssistant({
+      gateway: new IaGateway('test-only', { messages: { create } } as any), model: 'm', effort: 'low',
+      tools: new AssistantTools(host(rows) as any, '2026-09'), system: [], messages: [{ role: 'user', content: 'relevé' }],
+      beforeCall: async () => undefined, onUsage: async () => undefined,
+    });
+    expect(r.text).toBe(analyse.trim() + '\n\nLe bouton ci-dessus ouvre le relevé.');
+  });
+
   it('s’arrête à la limite d’étapes et le signale', async () => {
     const create = jest.fn(async () => ({ stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'tool_use', id: 'x' + Math.random(), name: 'synthese_mois', input: {} }] }));
     const r = await runAssistant({

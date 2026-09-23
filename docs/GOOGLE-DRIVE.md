@@ -44,6 +44,16 @@ C'est la seule étape manuelle ; ensuite tout est automatique.
 4. Retour automatique sur Réglages → « Google Drive connecté ». Toutes les pièces et snapshots déjà
    présents, plus une première sauvegarde, partent aussitôt ; le bouton **Ouvrir le dossier Waraqa dans Drive** apparaît.
 
+## 3. Importer un dossier de pièces par son lien (facultatif)
+
+Page **Importer des pièces → Importer un dossier Google Drive** : collez le lien du dossier du mois. Au premier usage, Waraqa demande la **lecture seule** de vos dossiers (`drive.readonly`) :
+
+1. Cliquez sur **Autoriser la lecture Drive**, choisissez `saberrochdi509@gmail.com`, cochez l'accès, puis **Continuer**.
+2. Cette portée est classée « restreinte » par Google. Pour votre propre application, Google affiche « application non validée » : cliquez sur **Paramètres avancés → Accéder à Waraqa**. L'usage reste possible sans validation Google, jusqu'à 100 comptes.
+3. Si Google refuse la demande, ajoutez la portée `.../auth/drive.readonly` dans Google Cloud → **Accès aux données**, puis réessayez.
+
+Waraqa lit le dossier et ses sous-dossiers (PDF, images, Excel, CSV, JSON ; Google Sheets exportés en Excel) sans rien y modifier. Les pièces lues ne sont pas recopiées dans `Waraqa/Pièces` (elles sont déjà dans votre Drive).
+
 ## Sécurité et comportement
 
 - **Compte verrouillé** : seul `GOOGLE_ALLOWED_EMAIL` (dans `backend/.env`, par défaut `saberrochdi509@gmail.com`)

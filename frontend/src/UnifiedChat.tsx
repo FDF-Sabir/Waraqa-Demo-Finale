@@ -26,6 +26,7 @@ export default function Chat({
   month,
   go,
   mode,
+  profile,
   templates,
   draft,
   clearDraft,
@@ -37,6 +38,7 @@ export default function Chat({
   month: string;
   go: (p: Page) => void;
   mode: string;
+  profile?: string;
   templates: RecordItem[];
   draft: string;
   clearDraft: () => void;
@@ -125,10 +127,17 @@ export default function Chat({
       if (!c || c.data.month !== month) c = await create();
       pendingConversation.current = c!.id;
       const documentIds: string[] = [...retryIds];
+      let note = "";
       for (const file of pendingFiles) {
         const data = new FormData();
         data.append("file", file);
-        const d = await api("/workspace/documents", "POST", data);
+        if (/\.zip$/i.test(file.name)) {
+          // Dossier compressé : import en lot en arrière-plan (suivi dans Importer et via l’assistant).
+          const lot = await api("/workspace/imports/zip", "POST", data);
+          note += `\n\n[Dossier « ${file.name} » : import de ${lot.data.total} pièce(s) lancé.]`;
+          continue;
+        }
+        const d = await api("/workspace/documents?reuse=true", "POST", data);
         documentIds.push(d.id);
       }
       editDraft("");
@@ -136,7 +145,7 @@ export default function Chat({
       const updated = await api(
         "/workspace/conversations/" + c!.id + "/messages",
         "POST",
-        { text: question, documentIds, ...(noCache ? { noCache: true } : {}) },
+        { text: question + note, documentIds, ...(noCache ? { noCache: true } : {}) },
       );
       setConversations((p) =>
         p.map((x) => (x.id === updated.id ? updated : x)),
@@ -170,8 +179,8 @@ export default function Chat({
               {usd(budget.usage.costUsd)} / {budget.budgetUsd} $ ce mois
             </span>
           )}
-          <span className={"u-ai-label " + (mode === "live" ? "live" : "")}>
-            {mode === "live" ? "IA connectée" : "Démo · analyses locales"}
+          <span className={"u-ai-label " + (mode === "live" ? "live" : profile === "online" ? "off" : "")}>
+            {mode === "live" ? "IA connectée" : profile === "online" ? "IA non connectée" : "Démo · analyses locales"}
           </span>
         </span>
       </div>
@@ -266,7 +275,9 @@ export default function Chat({
                   <br />
                   {mode === "live"
                     ? "Waraqa consulte directement vos lignes, anomalies, paiements et pièces, puis vous propose des actions à confirmer. Joignez un scan pour le faire lire."
-                    : "Commencez sans clé avec les analyses locales de votre dossier. Activez l’IA dans Réglages → Assistant IA."}
+                    : profile === "online"
+                      ? "L’IA Claude sera disponible dès la clé Anthropic enregistrée (Réglages → Assistant IA)."
+                      : "Commencez sans clé avec les analyses locales de votre dossier. Activez l’IA dans Réglages → Assistant IA."}
                 </p>
                 <div className="u-prompt-grid">
                   {templates.slice(0, 4).map((t) => (
@@ -299,7 +310,7 @@ export default function Chat({
                         : m.mode === "live"
                           ? m.result?.cached ? "Réponse IA · réutilisée" : "Réponse IA" + (m.result?.model ? " · " + m.result.model : "")
                           : m.mode === "error"
-                            ? "Connexion en erreur"
+                            ? m.result?.type === "setup" ? "Mise en service requise" : "Connexion en erreur"
                             : ""}
                     </span>
                   </div>
@@ -492,13 +503,12 @@ export default function Chat({
                     type="file"
                     aria-label="Joindre des pièces au chat"
                     multiple
-                    accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.csv,.json"
+                    accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.csv,.json,.zip"
                     disabled={busy}
                     onChange={(e) => {
-                      setFiles((p) => [
-                        ...p,
-                        ...Array.from(e.target.files || []),
-                      ]);
+                      // Liste lue avant la remise à zéro du champ : la mise à jour d'état peut être différée.
+                      const picked = Array.from(e.target.files || []);
+                      setFiles((p) => [...p, ...picked]);
                       e.target.value = "";
                     }}
                   />
@@ -532,7 +542,9 @@ export default function Chat({
             <p className="u-chat-disclaimer">
               {mode === "live"
                 ? "Les réponses IA nécessitent votre contrôle. Les données utiles sont envoyées à Anthropic uniquement pendant la réponse."
-                : "Sans clé, les réponses sont des analyses déterministes, pas une conversation IA libre."}
+                : profile === "online"
+                  ? "IA Claude non connectée : terminez la mise en service pour obtenir des réponses."
+                  : "Sans clé, les réponses sont des analyses déterministes, pas une conversation IA libre."}
             </p>
           </div>
         </section>

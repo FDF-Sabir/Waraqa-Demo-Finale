@@ -13,7 +13,8 @@
     "test": "npm test --prefix backend -- --runInBand && npm run test:e2e --prefix backend -- --runInBand && node scripts/smoke.cjs",
     "test:smoke": "node scripts/smoke.cjs",
     "test:ui": "node scripts/ui-test.mjs",
-    "test:ia": "node scripts/test-ia-reelle.cjs"
+    "test:ia": "node scripts/test-ia-reelle.cjs",
+    "test:releve": "node scripts/test-reel-releve.cjs"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0"

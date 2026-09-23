@@ -9,13 +9,15 @@ export default function Settings({
   user,
   run,
   refresh,
+  initialTab,
 }: {
+  initialTab?: string;
   settings: any;
   user: any;
   run: Run;
   refresh: () => Promise<void>;
 }) {
-  const [tab, setTab] = useState(() => new URLSearchParams(location.search).get("drive") ? "integrations" : "company"),
+  const [tab, setTab] = useState(() => new URLSearchParams(location.search).get("drive") ? "integrations" : initialTab || "company"),
     [form, setForm] = useState<any>(structuredClone(settings)),
     [prefs, setPrefs] = useState<any>(null),
     [users, setUsers] = useState<any[]>([]),
@@ -86,13 +88,24 @@ export default function Settings({
             <>
               <h2>Votre entreprise</h2>
               <p>
-                Ces informations figurent dans la feuille Informations des
-                exports Excel.
+                Ces informations figurent en tête du relevé de déduction (XML
+                SIMPL et modèle Excel DGI) et dans les exports.
               </p>
               <div className="formgrid u-form">
                 {field("company", "name", "Raison sociale")}
                 {field("company", "ice", "ICE")}
-                {field("company", "iff", "Identifiant fiscal")}
+                {field("company", "iff", "Identifiant fiscal (IF)")}
+                <label>
+                  Régime TVA (relevé de déduction)
+                  <select
+                    value={form.company.regime ?? 1}
+                    disabled={!admin}
+                    onChange={(e) => set("company", "regime", Number(e.target.value))}
+                  >
+                    <option value={1}>1 — Encaissement (déduction au mois du paiement)</option>
+                    <option value={2}>2 — Débits (déduction au mois de la facture)</option>
+                  </select>
+                </label>
                 {field("company", "city", "Ville")}
                 {field("company", "address", "Adresse")}
               </div>

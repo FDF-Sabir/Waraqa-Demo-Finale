@@ -31,7 +31,7 @@ function readEnv(content, name) {
 
 /** Facture fictive au format PDF texte, générée localement avec pdfkit. */
 function syntheticInvoice() {
-  const PDFDocument = require(path.join(backend, "node_modules", "pdfkit"));
+  const PDFDocument = require("node:module").createRequire(path.join(backend, "package.json"))("pdfkit");
   return new Promise((resolve) => {
     const doc = new PDFDocument({ size: "A4", margin: 50 });
     const chunks = [];

@@ -144,6 +144,10 @@ async function waitAndOpen() {
       ? `identifiants OAuth présents — compte ${env.GOOGLE_ALLOWED_EMAIL || "au choix"} (état dans Réglages → Intégrations)`
       : "à configurer — Réglages → Intégrations (voir docs/GOOGLE-DRIVE.md)",
   );
+  if (online && !(key && env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET)) {
+    console.log("\n  MISE EN SERVICE À TERMINER — sans clé Anthropic, l’assistant ne répond pas (aucune réponse préenregistrée).");
+    console.log("  Ouvrez Waraqa en administrateur : le bandeau « Mise en service » guide chaque étape.");
+  }
   console.log("\nLaissez cette fenêtre ouverte. Ctrl+C pour arrêter.\n");
 
   const child = spawn(process.execPath, ["dist/main.js"], {

@@ -1372,3 +1372,36 @@ pre {
 .u-ai-card code { display: block; padding: 8px 10px; background: #f0f3ec; border-radius: 6px; font-size: 12px; }
 .u-ai-card a.secondary { display: inline-flex; align-items: center; text-decoration: none; }
 .u-ai-card .u-form p { font-size: 13px; line-height: 1.55; }
+
+/* Mise en service (profil en ligne) */
+.u-ai-label.off { color: #9a3b2e; background: #fbeeea; border-color: #efcfc6; }
+.u-commissioning { border: 1px solid #e3dcbc; background: #faf8ee; border-radius: 12px; padding: 16px 18px; margin: 0 0 18px; display: grid; gap: 12px; }
+.u-commissioning > div { display: grid; gap: 3px; }
+.u-commissioning small { color: #6c6a5c; }
+.u-commissioning ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.u-commissioning li { display: flex; align-items: flex-start; gap: 10px; background: #fff; border: 1px solid #ece6cd; border-radius: 10px; padding: 10px 12px; }
+.u-commissioning li > span:nth-child(2) { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.u-commissioning li .u-dot { width: 10px; height: 10px; margin-top: 5px; flex-shrink: 0; background: #d98b6f; }
+.u-commissioning li .u-dot.ok { background: #2f8f5b; }
+.u-commissioning li button { flex-shrink: 0; }
+.u-commissioning > button { justify-self: start; }
+.u-commissioning.compact { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 14px; margin-bottom: 12px; }
+.u-commissioning.compact > span { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.u-commissioning.compact .u-dot { width: 8px; height: 8px; background: #d98b6f; }
+.u-commissioning.compact .u-dot.ok { background: #2f8f5b; }
+.u-commissioning.compact > button:first-of-type { margin-left: auto; }
+.u-commissioning.compact ~ .u-chat-page { height: calc(100vh - 215px); }
+
+/* Relevé de déduction & imports de dossiers */
+.u-check { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+.u-muted { color: #67786f; font-size: 13px; }
+.u-bad { display: block; color: #9a3b2e; }
+.u-warn { display: block; color: #8a6a1f; }
+.u-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.u-drive-import { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0 6px; }
+.u-drive-import input { flex: 1 1 280px; min-width: 0; }
+.u-lot { border: 1px solid #e2e8e4; border-radius: 10px; padding: 10px 14px; margin-top: 10px; }
+.u-lot summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; cursor: pointer; }
+.u-lot summary span { color: #67786f; font-size: 13px; }
+.u-lot progress { flex: 1 1 160px; height: 8px; accent-color: #186b55; }
+.u-lot .u-task span { min-width: 0; overflow-wrap: anywhere; }

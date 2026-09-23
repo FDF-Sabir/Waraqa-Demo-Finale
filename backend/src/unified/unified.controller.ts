@@ -30,13 +30,13 @@ function month(value: string) {
 export class UnifiedController {
   constructor(private service: UnifiedService, private integrations: IntegrationsService) {}
   @UseGuards(JwtAuthGuard) @Get('integrations') integrationsStatus(@UtilisateurCourant() u:any) {return this.integrations.status(u);}
-  @UseGuards(JwtAuthGuard) @Post('drive/start') driveStart(@UtilisateurCourant() u:any) {return this.integrations.start(u);}
+  @UseGuards(JwtAuthGuard) @Post('drive/start') driveStart(@UtilisateurCourant() u:any,@Body() b:any) {return this.integrations.start(u,{readonly:b?.readonly===true});}
   @Get('drive/callback') async driveCallback(@Query('state') state:string,@Query('code') code:string,@Query('error') error:string,@Res() res:Response) {
     res.setHeader('Referrer-Policy','no-referrer');
     try {
       if (error) throw new BadRequestException(error==='access_denied'?'Autorisation Google annulée.':'Google a refusé l’autorisation.');
-      await this.integrations.callback(state,code);
-      res.redirect('/?drive=ok#/reglages');
+      const r = await this.integrations.callback(state,code);
+      res.redirect('/?drive=ok#/'+r.returnTo);
     } catch (e:any) {
       const msg=String(e?.response?.message || e?.message || 'Autorisation Google impossible.').slice(0,300);
       res.redirect('/?drive=erreur&message='+encodeURIComponent(msg)+'#/reglages');
@@ -54,6 +54,7 @@ export class UnifiedController {
   @UseGuards(JwtAuthGuard) @Delete('ai/key') aiKeyDelete(@UtilisateurCourant() u:any) {return this.service.deleteAiKey(u);}
   @UseGuards(JwtAuthGuard) @Post('ai/test') aiTest(@UtilisateurCourant() u:any) {return this.service.testAi(u);}
   @UseGuards(JwtAuthGuard) @Get('conversations/:id/progress') chatProgress(@Param('id') id:string,@UtilisateurCourant() u:any) {return this.service.chatProgressFor(id,u);}
+  @UseGuards(JwtAuthGuard) @Get('readiness') readiness() {return this.service.readiness();}
   @Get("status") status() {
     return this.service.status();
   }
@@ -117,8 +118,8 @@ export class UnifiedController {
   @UseInterceptors(
     FileInterceptor("file", { limits: { fileSize: 20 * 1024 * 1024 } }),
   )
-  upload(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any, @Query("preview") preview?: string) {
-    return this.service.upload(f, u, preview === "true");
+  upload(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any, @Query("preview") preview?: string, @Query("reuse") reuse?: string) {
+    return this.service.upload(f, u, preview === "true", reuse === "true");
   }
   @UseGuards(JwtAuthGuard) @Get("documents/:id/preview") preview(@Param('id') id: string) { return this.service.importPreview(id); }
   @UseGuards(JwtAuthGuard) @Put("documents/:id/mapping") mapping(@Param('id') id: string, @Body() b: any) { return this.service.importPreview(id, b.mapping); }
@@ -212,6 +213,34 @@ export class UnifiedController {
   ) {
     return this.service.snapshot(month(b.month), u);
   }
+  @UseGuards(JwtAuthGuard) @Get("imports") lots() { return this.service.lots(); }
+  @UseGuards(JwtAuthGuard) @Get("imports/:id") lot(@Param("id") id: string) { return this.service.get(id, "import_lot"); }
+  @UseGuards(JwtAuthGuard) @Post("imports/drive") importDrive(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.importDriveFolder(b?.url, u); }
+  @UseGuards(JwtAuthGuard)
+  @Post("imports/zip")
+  @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 300 * 1024 * 1024 } }))
+  importZip(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any) { return this.service.importZip(f, u); }
+  @UseGuards(JwtAuthGuard) @Get("releve") releve(@Query("month") m: string, @Query("scope") scope: string, @Query("examples") examples: string) {
+    return this.service.releve(month(m), scope, examples === "true");
+  }
+  @UseGuards(JwtAuthGuard) @Get("releve/export") async releveExport(
+    @Query("month") m: string,
+    @Query("format") format: string,
+    @Query("scope") scope: string,
+    @Query("examples") examples: string,
+    @UtilisateurCourant() u: any,
+    @Res() res: Response,
+  ) {
+    const f = await this.service.releveExport(month(m), format, scope, u, examples === "true");
+    res.setHeader("Content-Type", f.mime);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Content-Disposition", `attachment; filename="${f.name}"`);
+    res.send(f.buffer);
+  }
+  @UseGuards(JwtAuthGuard) @Post("releve/attach") releveAttach(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.releveAttach(b?.ids, month(b?.month), u); }
+  @UseGuards(JwtAuthGuard) @Post("releve/detach/:id") releveDetach(@Param("id") id: string, @UtilisateurCourant() u: any) { return this.service.releveDetach(Number(id), u); }
+  @UseGuards(JwtAuthGuard) @Post("releve/close") releveClose(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.releveClose(month(b?.month), u); }
+  @UseGuards(JwtAuthGuard) @Post("releve/reopen") releveReopen(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.releveReopen(month(b?.month), u); }
   @UseGuards(JwtAuthGuard) @Get("export") async export(
     @Query("month") m: string,
     @Query("format") format: string,

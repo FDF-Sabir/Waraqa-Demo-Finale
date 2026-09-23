@@ -22,11 +22,13 @@ import {
 } from "./api";
 import Chat from "./UnifiedChat";
 import Settings from "./UnifiedSettings";
+import Declaration from "./Declaration";
 export { Icon } from "./Icons";
 export type Page =
   | "chat"
   | "dashboard"
   | "releve"
+  | "declaration"
   | "import"
   | "designations"
   | "journal"
@@ -38,6 +40,7 @@ const nav: { id: Page; label: string; icon: any }[] = [
   { id: "chat", label: "Discussion IA", icon: "chatbubble" },
   { id: "dashboard", label: "Vue d’ensemble", icon: "grid" },
   { id: "releve", label: "Pièces & relevé TVA", icon: "table" },
+  { id: "declaration", label: "Relevé de déduction", icon: "check" },
   { id: "import", label: "Importer des pièces", icon: "upload" },
   { id: "banque", label: "Rapprochement", icon: "arrow" },
   { id: "designations", label: "Désignations", icon: "tag" },
@@ -160,13 +163,100 @@ export type Run = (
   fn: () => Promise<unknown>,
   success?: string,
 ) => Promise<boolean>;
+function Commissioning({
+  readiness: r,
+  compact,
+  admin,
+  configure,
+  recheck,
+}: {
+  compact?: boolean;
+  readiness: any;
+  admin: boolean;
+  configure: (tab: string) => void;
+  recheck: () => void;
+}) {
+  const drive = r.drive.authorized && !r.drive.needsReauth;
+  const steps: [string, boolean, string, string | null][] = [
+    ["Connexion Internet", r.internet, r.internet ? "Services Anthropic et Google joignables" : "Hors ligne : vérifiez la connexion du poste", null],
+    ["IA Claude", r.ai.keyConfigured, r.ai.keyConfigured ? "Clé enregistrée · réponses et extraction par l’IA" : "Clé Anthropic à enregistrer (activation immédiate)", r.ai.keyConfigured ? null : "ai"],
+    [
+      "Google Drive",
+      drive,
+      drive
+        ? `Connecté · ${r.drive.email || "compte vérifié"}`
+        : r.drive.needsReauth
+          ? "Reconnexion nécessaire"
+          : r.drive.configured
+            ? "Identifiants présents · compte à connecter"
+            : "Identifiant OAuth Google à charger puis compte à connecter",
+      drive ? null : "integrations",
+    ],
+  ];
+  const next = steps.find(([, ok, , tab]) => !ok && tab)?.[3];
+  if (compact)
+    return (
+      <section className="u-commissioning compact" aria-label="Mise en service">
+        <b>Mise en service à terminer</b>
+        {steps.map(([label, ok, detail]) => (
+          <span key={label} title={detail}>
+            <span className={"u-dot" + (ok ? " ok" : "")} />
+            {label}
+          </span>
+        ))}
+        {admin && next && (
+          <button className="primary small" onClick={() => configure(next)}>
+            Configurer
+          </button>
+        )}
+        <button className="secondary small" onClick={recheck}>
+          Vérifier
+        </button>
+      </section>
+    );
+  return (
+    <section className="u-commissioning" aria-label="Mise en service">
+      <div>
+        <b>Mise en service à terminer</b>
+        <small>
+          {admin
+            ? "Waraqa ne fournit aucune réponse préenregistrée : terminez ces étapes pour travailler avec l’IA et la sauvegarde Drive."
+            : "Un administrateur doit terminer ces étapes pour activer l’IA et la sauvegarde Drive."}
+        </small>
+      </div>
+      <ol>
+        {steps.map(([label, ok, detail, tab]) => (
+          <li key={label} className={ok ? "ok" : ""}>
+            <span className={"u-dot" + (ok ? " ok" : "")} />
+            <span>
+              <b>{label}</b>
+              <small>{detail}</small>
+            </span>
+            {admin && tab && (
+              <button className="primary small" onClick={() => configure(tab)}>
+                Configurer
+              </button>
+            )}
+          </li>
+        ))}
+      </ol>
+      <button className="secondary small" onClick={recheck}>
+        Vérifier à nouveau
+      </button>
+    </section>
+  );
+}
 function Login({ onLogin }: { onLogin: (u: any) => void }) {
   const [setup, setSetup] = useState(false),
+    [profile, setProfile] = useState(""),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   useEffect(() => {
     api("/workspace/status")
-      .then((d) => setSetup(d.needsSetup))
+      .then((d) => {
+        setSetup(d.needsSetup);
+        setProfile(d.profile);
+      })
       .catch((e) => setError(e.message));
   }, []);
   const submit = async (e: FormEvent<HTMLFormElement>) => {
@@ -204,7 +294,7 @@ function Login({ onLogin }: { onLogin: (u: any) => void }) {
           réunis dans Waraqa.
         </p>
         <div className="u-login-note">
-          Démo locale · Aucune clé API requise
+          {profile === "local" ? "Démo locale · Aucune clé API requise" : "Application locale · IA Claude et Google Drive connectés"}
           <br />
           Données persistantes · Validation humaine
         </div>
@@ -271,6 +361,8 @@ export default function App() {
     [designations, setDesignations] = useState<any[]>([]),
     [notes, setNotes] = useState<any[]>([]),
     [settings, setSettings] = useState<any>(null),
+    [readiness, setReadiness] = useState<any>(null),
+    [settingsTab, setSettingsTab] = useState<string | undefined>(),
     [templates, setTemplates] = useState<RecordItem[]>([]),
     [notice, setNotice] = useState(""),
     [error, setError] = useState(""),
@@ -311,6 +403,11 @@ export default function App() {
     setSettings(data[4]);
     setTemplates(data[5]);
     setNotifyEnabled(data[6].notif_push_web);
+    setReadiness(await api("/workspace/readiness").catch(() => null));
+  }
+  function configure(tab: string) {
+    setSettingsTab(tab);
+    go("reglages");
   }
   useEffect(() => {
     if (token())
@@ -383,6 +480,10 @@ export default function App() {
     await refresh();
   }
   async function exportFile(format: string, scope = "reviewed", examples = false) {
+    if (format.startsWith("releve-")) {
+      const f = format.slice(7);
+      return download(`/workspace/releve/export?month=${month}&format=${f}&scope=${scope}`, `Releve-deduction-${month}.${f}`);
+    }
     await download(
       `/workspace/export?month=${month}&format=${format}&scope=${scope}&examples=${examples}`,
       `Waraqa-${format}-${month}${examples ? "-EXEMPLES" : ""}${scope === "all" ? "-BROUILLON" : ""}.${format === "xlsx" ? "xlsx" : format === "pdf" ? "pdf" : "csv"}`,
@@ -588,11 +689,21 @@ export default function App() {
           {busy > 0 && (
             <div className="u-progress" aria-label="Action en cours" />
           )}
+          {readiness && !readiness.ready && (
+            <Commissioning
+              compact={page === "chat"}
+              readiness={readiness}
+              admin={user.role === "admin"}
+              configure={configure}
+              recheck={() => run(refresh)}
+            />
+          )}
           {page === "chat" && (
             <Chat
               month={month}
               go={go}
               mode={settings?.ai.mode || "demo"}
+              profile={settings?.ai.profile}
               templates={templates}
               draft={draft}
               clearDraft={() => setDraft("")}
@@ -773,6 +884,19 @@ export default function App() {
               exportFile={exportFile}
             />
           )}
+          {page === "declaration" && (
+            <Declaration
+              month={month}
+              user={user}
+              run={run}
+              go={go}
+              refresh={refresh}
+              openInvoice={async (id) => {
+                setDocumentId(undefined);
+                setEditing(await api<Invoice>("/factures/" + id));
+              }}
+            />
+          )}
           {page === "import" && (
             <Imports
               docs={docs}
@@ -781,6 +905,8 @@ export default function App() {
               add={add}
               mode={settings?.ai.mode}
               go={go}
+              admin={user.role === "admin"}
+              driveReady={Boolean(readiness?.drive?.authorized)}
             />
           )}
           {page === "designations" && (
@@ -808,6 +934,8 @@ export default function App() {
           {page === "journal" && <Journal run={run} />}
           {page === "reglages" && settings && (
             <Settings
+              key={settingsTab}
+              initialTab={settingsTab}
               settings={settings}
               user={user}
               run={run}
@@ -818,7 +946,9 @@ export default function App() {
             Waraqa 4.3 · {settings?.ai.profile === "online" ? "Profil en ligne" : "Profil local"} ·{" "}
             {settings?.ai.mode === "live"
               ? "IA connectée"
-              : "Analyses locales sans IA externe"}{" "}
+              : settings?.ai.profile === "online"
+                ? "IA non connectée (mise en service à terminer)"
+                : "Analyses locales sans IA externe"}{" "}
             · Données conservées sur ce poste{settings?.ai.profile === "online" ? ", copie Google Drive une fois connecté" : ""}
           </footer>
         </main>
@@ -1374,6 +1504,8 @@ function Imports({
   add,
   mode,
   go,
+  admin,
+  driveReady,
 }: {
   docs: RecordItem[];
   run: Run;
@@ -1381,17 +1513,60 @@ function Imports({
   add: (id?: string) => void;
   mode: string;
   go: (p: Page) => void;
+  admin: boolean;
+  driveReady: boolean;
 }) {
   const [files, setFiles] = useState<File[]>([]),
     [progress, setProgress] = useState<any[]>([]),
     [working, setWorking] = useState(false),
-    [details, setDetails] = useState<RecordItem | null>(null);
+    [details, setDetails] = useState<RecordItem | null>(null),
+    [lots, setLots] = useState<RecordItem[]>([]),
+    [link, setLink] = useState(""),
+    [needsRead, setNeedsRead] = useState(false);
+  const running = lots.some((l) => l.data.status === "en_cours");
+  useEffect(() => {
+    api<RecordItem[]>("/workspace/imports").then(setLots).catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(async () => {
+      const next = await api<RecordItem[]>("/workspace/imports").catch(() => null);
+      if (!next) return;
+      setLots(next);
+      if (!next.some((l) => l.data.status === "en_cours")) await run(refresh);
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [running]);
+  async function importDrive() {
+    setNeedsRead(false);
+    const ok = await run(async () => {
+      try {
+        const lot = await api<RecordItem>("/workspace/imports/drive", "POST", { url: link.trim() });
+        setLots((p) => [lot, ...p]);
+        setLink("");
+      } catch (e: any) {
+        if (e.code === "drive_lecture_requise") setNeedsRead(true);
+        throw e;
+      }
+    }, "Import du dossier Drive lancé");
+    if (ok) setNeedsRead(false);
+  }
   async function upload() {
     setWorking(true);
     setProgress([]);
     for (const file of files) {
       const data = new FormData();
       data.append("file", file);
+      if (/\.zip$/i.test(file.name)) {
+        try {
+          const lot = await api<RecordItem>("/workspace/imports/zip", "POST", data);
+          setLots((p) => [lot, ...p]);
+          setProgress((p) => [...p, { name: file.name, status: `lot lancé · ${lot.data.total} pièce(s)`, errors: lot.data.skipped.map((x: any) => `${x.name} : ${x.reason}`).slice(0, 10) }]);
+        } catch (e: any) {
+          setProgress((p) => [...p, { name: file.name, status: "erreur", errors: [e.message] }]);
+        }
+        continue;
+      }
       try {
         const r = await api("/workspace/documents?preview=true", "POST", data);
         setProgress((p) => [
@@ -1427,17 +1602,19 @@ function Imports({
         >
           <Icon name="upload" size={36} />
           <h2>Glissez vos pièces ici</h2>
-          <p>PDF, JPG, PNG, Excel, CSV ou JSON · 20 Mo par fichier</p>
+          <p>PDF, JPG, PNG, Excel, CSV, JSON · ou un dossier compressé .zip · 20 Mo par pièce</p>
           <label className="primary u-file-label">
             Choisir des fichiers
             <input
               aria-label="Choisir des fichiers"
               type="file"
               multiple
-              accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.csv,.json"
+              accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.csv,.json,.zip"
               disabled={working}
               onChange={(e) => {
-                setFiles((p) => [...p, ...Array.from(e.target.files || [])]);
+                // Liste lue avant la remise à zéro du champ : la mise à jour d'état peut être différée.
+                const picked = Array.from(e.target.files || []);
+                setFiles((p) => [...p, ...picked]);
                 e.target.value = "";
               }}
             />
@@ -1449,9 +1626,10 @@ function Imports({
               accept="image/*"
               capture="environment"
               disabled={working}
-              onChange={(e) =>
-                setFiles((p) => [...p, ...Array.from(e.target.files || [])])
-              }
+              onChange={(e) => {
+                const picked = Array.from(e.target.files || []);
+                setFiles((p) => [...p, ...picked]);
+              }}
             />
           </label>
         </div>
@@ -1492,6 +1670,66 @@ function Imports({
           </div>
         ))}
       </section>
+      <section className="panel u-pad">
+        <h2>Importer un dossier Google Drive</h2>
+        <p className="u-muted">
+          Collez le lien du dossier qui contient les pièces du mois (sous-dossiers compris ; Google Sheets convertis en Excel). Le dossier doit appartenir ou être partagé avec le compte Google connecté.
+        </p>
+        <div className="u-drive-import">
+          <input
+            aria-label="Lien du dossier Google Drive"
+            placeholder="https://drive.google.com/drive/folders/…"
+            value={link}
+            onChange={(e) => setLink(e.target.value)}
+          />
+          <button className="primary" disabled={!link.trim() || !driveReady} onClick={importDrive}>
+            Importer le dossier
+          </button>
+        </div>
+        {!driveReady && <small className="u-warn">Google Drive n’est pas encore connecté (Réglages → Intégrations).</small>}
+        {needsRead && (
+          <div className="u-info">
+            <b>Autorisation de lecture requise</b>
+            <p>Waraqa n’a accès qu’à ses propres fichiers. Pour lire les dossiers que vous lui indiquez, Google demande votre accord une seule fois (lecture seule).</p>
+            {admin ? (
+              <button className="primary small" onClick={() => run(async () => { const r = await api("/workspace/drive/start", "POST", { readonly: true }); location.href = r.url; })}>
+                Autoriser la lecture Drive
+              </button>
+            ) : (
+              <p>Demandez à un administrateur d’autoriser la lecture Drive.</p>
+            )}
+          </div>
+        )}
+      </section>
+      {lots.length > 0 && (
+        <section className="panel u-pad">
+          <div className="u-row">
+            <h2>Imports de dossiers</h2>
+            <button className="secondary small" onClick={() => go("declaration")}>Relevé de déduction</button>
+          </div>
+          {lots.slice(0, 8).map((l) => (
+            <details className="u-lot" key={l.id} open={l.data.status === "en_cours"}>
+              <summary>
+                <b>{l.data.source === "drive" ? "Drive" : "ZIP"} · {l.data.label}</b>
+                <span>
+                  {l.data.processed}/{l.data.total} pièce(s) · {l.data.items.reduce((n: number, x: any) => n + (x.lines || 0), 0)} ligne(s) ·{" "}
+                  {l.data.status === "en_cours" ? "en cours" : l.data.status === "interrompu" ? "interrompu" : "terminé"}
+                </span>
+                <progress max={l.data.total || 1} value={l.data.processed} />
+              </summary>
+              {l.data.items.map((x: any, i: number) => (
+                <div className="u-task" key={i}>
+                  <span>{x.name}{x.error && <small className="u-warn">{x.error}</small>}</span>
+                  <Status tone={["a_verifier", "deja_importe"].includes(x.state) ? "green" : ["en_attente", "en_cours"].includes(x.state) ? "blue" : "amber"}>
+                    {String(x.state).replace(/_/g, " ")}{x.lines ? ` · ${x.lines}` : ""}
+                  </Status>
+                </div>
+              ))}
+              {l.data.skipped?.length > 0 && <small className="u-muted">{l.data.skipped.length} fichier(s) ignoré(s) : {l.data.skipped.slice(0, 5).map((x: any) => x.name).join(", ")}</small>}
+            </details>
+          ))}
+        </section>
+      )}
       <section className="panel u-pad">
         <div className="u-row">
           <h2>Bibliothèque de pièces ({docs.length})</h2>

@@ -1,13 +1,13 @@
 {
-  "date": "2026-09-23T12:35:41.467Z",
+  "date": "2026-09-23T22:09:26.829Z",
   "browser": "chromium",
-  "version": "141.0.7390.37",
+  "version": "153.0.8010.12",
   "matrix": [
     {
       "width": 320,
       "height": 1000,
       "orientation": "portrait",
-      "pages": 10,
+      "pages": 11,
       "status": "passed",
       "kind": "émulation viewport"
     },
@@ -15,7 +15,7 @@
       "width": 320,
       "height": 480,
       "orientation": "paysage",
-      "pages": 10,
+      "pages": 11,
       "status": "passed",
       "kind": "émulation viewport"
     },
@@ -23,7 +23,7 @@
       "width": 375,
       "height": 1000,
       "orientation": "portrait",
-      "pages": 10,
+      "pages": 11,
       "status": "passed",
       "kind": "émulation viewport"
     },
@@ -31,7 +31,7 @@
       "width": 375,
       "height": 480,
       "orientation": "paysage",
-      "pages": 10,
+      "pages": 11,
       "status": "passed",
       "kind": "émulation viewport"
     },
@@ -39,7 +39,7 @@
       "width": 390,
       "height": 1000,
       "orientation": "portrait",
-      "pages": 10,
+      "pages": 11,
       "status": "passed",
       "kind": "émulation viewport"
     },
@@ -47,7 +47,7 @@
       "width": 390,
       "height": 480,
       "orientation": "paysage",
-      "pages": 10,
+      "pages": 11,
       "status": "passed",
       "kind": "émulation viewport"
     },
@@ -55,7 +55,7 @@
       "width": 768,
       "height": 1000,
       "orientation": "portrait",
-      "pages": 10,
+      "pages": 11,
       "status": "passed",
       "kind": "émulation viewport"
     },
@@ -63,7 +63,7 @@
       "width": 768,
       "height": 480,
       "orientation": "paysage",
-      "pages": 10,
+      "pages": 11,
       "status": "passed",
       "kind": "émulation viewport"
     },
@@ -71,7 +71,7 @@
       "width": 1024,
       "height": 1000,
       "orientation": "portrait",
-      "pages": 10,
+      "pages": 11,
       "status": "passed",
       "kind": "émulation viewport"
     },
@@ -79,7 +79,7 @@
       "width": 1024,
       "height": 480,
       "orientation": "paysage",
-      "pages": 10,
+      "pages": 11,
       "status": "passed",
       "kind": "émulation viewport"
     },
@@ -87,7 +87,7 @@
       "width": 1440,
       "height": 1000,
       "orientation": "portrait",
-      "pages": 10,
+      "pages": 11,
       "status": "passed",
       "kind": "émulation viewport"
     },
@@ -95,7 +95,7 @@
       "width": 1440,
       "height": 480,
       "orientation": "paysage",
-      "pages": 10,
+      "pages": 11,
       "status": "passed",
       "kind": "émulation viewport"
     },
@@ -103,7 +103,7 @@
       "width": 1920,
       "height": 1000,
       "orientation": "portrait",
-      "pages": 10,
+      "pages": 11,
       "status": "passed",
       "kind": "émulation viewport"
     },
@@ -111,7 +111,7 @@
       "width": 1920,
       "height": 480,
       "orientation": "paysage",
-      "pages": 10,
+      "pages": 11,
       "status": "passed",
       "kind": "émulation viewport"
     }

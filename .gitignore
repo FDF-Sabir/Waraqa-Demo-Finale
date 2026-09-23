@@ -11,3 +11,6 @@ backend/data/
 *api*key*
 *.key
 qa-failure.png
+
+# Relevés réels du comptable (données de tiers) : jamais versionnés
+/TVA *.xlsx

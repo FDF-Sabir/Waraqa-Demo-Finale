@@ -69,6 +69,8 @@ export interface LigneComparable {
   iceFrs?: string;
   iff?: string;
   mTtc?: number;
+  designation?: string;
+  dateFac?: string;
 }
 
 export function detecterDoublon(
@@ -76,6 +78,9 @@ export function detecterDoublon(
   existantes: LigneComparable[],
 ): LigneComparable | null {
   if (!candidate.factNum) return null;
+  // Commissions bancaires : référence générique (« AVUE ») et montants récurrents, parfois plusieurs
+  // le même jour — ce sont des déductions distinctes, jamais une facture saisie deux fois.
+  if (candidate.designation?.trim().toUpperCase() === 'COMMISSION') return null;
 
   const identifiantFournisseur = candidate.iceFrs || candidate.iff;
   if (!identifiantFournisseur) return null;
@@ -93,8 +98,10 @@ export function detecterDoublon(
       ligne.mTtc !== undefined &&
       candidate.mTtc !== undefined &&
       Math.abs(ligne.mTtc - candidate.mTtc) < 0.01;
+    // Deux dates de facture connues et différentes : deux pièces distinctes.
+    const memeDate = !ligne.dateFac || !candidate.dateFac || ligne.dateFac === candidate.dateFac;
 
-    return memeFactNum && memeFournisseur && memeMontant;
+    return memeFactNum && memeFournisseur && memeMontant && memeDate;
   });
 
   return trouve ?? null;

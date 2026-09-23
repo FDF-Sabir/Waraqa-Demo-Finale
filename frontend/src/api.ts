@@ -19,9 +19,11 @@ export async function api<T = any>(
       : { body: body instanceof FormData ? body : JSON.stringify(body) }),
   });
   if (!response.ok) {
-    let msg = "Erreur serveur";
+    let msg = "Erreur serveur",
+      code = "";
     try {
       const data = await response.json();
+      code = typeof data.code === "string" ? data.code : "";
       msg = Array.isArray(data.message)
         ? data.message.join(" · ")
         : data.message || msg;
@@ -30,7 +32,7 @@ export async function api<T = any>(
       sessionStorage.removeItem("waraqa-token");
       window.dispatchEvent(new Event("session-expired"));
     }
-    throw new Error(msg);
+    throw Object.assign(new Error(msg), { status: response.status, code });
   }
   const text = await response.text();
   return (text ? JSON.parse(text) : null) as T;

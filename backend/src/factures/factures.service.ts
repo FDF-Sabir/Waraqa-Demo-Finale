@@ -154,9 +154,10 @@ export class FacturesService {
       iceFrs: f.iceFrs,
       iff: f.iff,
       mTtc: f.mTtc,
+      dateFac: f.dateFac,
     }));
     const doublon = detecterDoublon(
-      { factNum: dto.factNum, iceFrs: dto.iceFrs, iff: dto.iff, mTtc },
+      { factNum: dto.factNum, iceFrs: dto.iceFrs, iff: dto.iff, mTtc, designation: dto.designation, dateFac: dto.dateFac },
       existantes,
     );
 

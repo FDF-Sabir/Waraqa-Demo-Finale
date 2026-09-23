@@ -5,6 +5,7 @@ Waraqa s’installe et se lance **sur votre poste**, mais dès son démarrage il
 - **IA Claude connectée en permanence** dès que votre clé est dans `backend/.env` : lecture des pièces, discussion, actions proposées. Aucun mode démo à basculer.
 - **Google Drive de saberrochdi509@gmail.com synchronisé automatiquement** : pièces importées, exports, snapshots PDF et sauvegarde complète quotidienne dans `Mon Drive/Waraqa/`.
 - Données de travail sur le poste (SQLite + pièces originales) : l’application reste utilisable sans Internet ; l’IA et Drive reprennent au retour du réseau.
+- **Relevé de déduction TVA** (DGI, art. 112 CGI) produit depuis le dossier du mois (ZIP ou lien de dossier Google Drive) : contrôles DGI, déductions tardives, **XML EDI pour SIMPL** et **Excel au modèle DGI**. Mode d’emploi : **`docs/RELEVE-DEDUCTION.md`**.
 
 ## Démarrer
 
@@ -29,7 +30,7 @@ Laisser la fenêtre ouverte (la synchronisation Drive tourne tant que Waraqa est
 Une seule mise en service de 5 minutes : créer l’identifiant OAuth dans Google Cloud avec votre compte, le charger dans **Réglages → Intégrations**, puis **Connecter Google Drive**. Pas-à-pas complet : **`docs/GOOGLE-DRIVE.md`**.
 
 - Seul `saberrochdi509@gmail.com` est accepté (réglable par `GOOGLE_ALLOWED_EMAIL` dans `backend/.env`).
-- Droit minimal `drive.file` : Waraqa ne voit que les fichiers qu’il crée.
+- Droit minimal `drive.file` : Waraqa ne voit que les fichiers qu’il crée. L’import par lien de dossier demande en plus, une seule fois et seulement à sa première utilisation, la **lecture seule** des dossiers que vous lui indiquez.
 - File durable, reprises automatiques, aucun doublon ; état, historique et « Synchroniser maintenant » dans Réglages → Intégrations.
 
 ## Revenir au comportement démo
@@ -45,6 +46,8 @@ Dans `backend/.env` : `WARAQA_PROFILE=local`, puis relancer. Le mode connecté r
 - Modèles de prompts : utiliser, créer, modifier, supprimer ; variable `{{mois}}`.
 - Tableau de bord calculé depuis les données, recherche et sélection de période.
 - Import multiple, dépôt glissé, capture photo mobile si le navigateur l’autorise ; conservation des originaux et détection de fichiers identiques par SHA-256.
+- **Import d’un dossier complet** : ZIP (sous-dossiers, ZIP inclus) ou lien de dossier Google Drive (Google Sheets convertis), traité en arrière-plan avec suivi par fichier.
+- **Relevé de déduction** : page dédiée (lignes retenues, écartées avec motif, alertes, déductions tardives à rattacher, totaux par taux), XML SIMPL, Excel modèle DGI, PDF, clôture de période ; l’assistant sait le préparer et l’expliquer.
 - Lecture **réelle sans clé** des fichiers Excel/CSV/JSON suivant les colonnes d’exemple ; erreurs isolées par ligne.
 - PDF/images sans clé : conservation et saisie manuelle, **aucune extraction inventée**.
 - Six sous-types V2 : facture fournisseur, déclaration douanière, quittance douane, note de frais, relevé bancaire et avis de débit/virement.
@@ -120,6 +123,7 @@ Extraire ce ZIP **par-dessus** le dossier existant : il ne contient ni `backend/
 - `npm run build` : compiler NestJS, vérifier TypeScript frontend et construire React/Vite.
 - `npm test` : tests unitaires, API/e2e (dont l’IA avec client simulé) et parcours intégrés sur base temporaire. Aucun appel payant n’est possible pendant les tests.
 - `npm run test:ia` : validation **réelle** avec votre clé (données fictives, plafond `WARAQA_TEST_BUDGET_USD`, 0,30 $ par défaut).
+- `npm run test:releve` : validation **réelle** de bout en bout (dossier ZIP lu par Claude → relevé → XML validé contre le schéma DGI → Excel ouvert par LibreOffice → assistant), plafond 0,80 $.
 - `npm run test:smoke` : parcours complets sans modifier votre base.
 - Développement séparé : `npm run start:dev --prefix backend` et `npm run dev --prefix frontend`. Le proxy frontend cible `127.0.0.1:3000`.
 
@@ -132,6 +136,7 @@ Les dépendances sont verrouillées par les deux `package-lock.json`. Aucun `nod
 - Erreur d’installation `sqlite3` : utiliser Node.js 22/24 et les outils de compilation natifs de votre système si un binaire précompilé n’est pas disponible. Ubuntu : outils de compilation C/C++ et Python ; Windows : Build Tools C++.
 - Écran vide : ouvrir `http://localhost:3000` ; ne pas ouvrir directement `index.html` depuis le disque.
 - Aucune donnée : vérifier la période. Les lignes sont rattachées au mois de paiement lorsqu’il est renseigné, sinon au mois de facture.
-- Format tabulaire refusé : suivre exactement les exemples, conserver ICE/IF comme texte et les dates en `AAAA-MM-JJ`. Une ligne sans montant TTC ou taux est rejetée avec une erreur visible.
+- Format tabulaire refusé : les en-têtes reconnus (FACT_NUM, LIB_FRSS, ICE_FRS, IF, M_TTC, TAUX, ID_PAIE, DATE_PAIE, DATE_FAC ou leurs équivalents « N° facture », « Fournisseur », « Montant TTC »…) doivent figurer dans les 30 premières lignes. Dates `JJ/MM/AAAA`, `AAAA-MM-JJ` ou dates Excel. Une ligne sans montant TTC ou taux est rejetée avec une erreur visible.
+- Linux : `DEMARRER.sh` choisit automatiquement une version de Node.js ≥ 22 installée par nvm si le `node` par défaut est plus ancien.
 
 Voir `docs/FUSION-ET-ARCHITECTURE.md` pour la correspondance des deux versions et `docs/VALIDATION.md` pour le périmètre des tests.

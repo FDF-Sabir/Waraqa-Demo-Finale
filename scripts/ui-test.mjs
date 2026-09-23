@@ -5,6 +5,7 @@ import { mkdtemp, rm, mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = await mkdtemp(path.join(tmpdir(), "waraqa-ui-"));
 const child = spawn(process.execPath, ["dist/main.js"], {
@@ -16,6 +17,8 @@ const child = spawn(process.execPath, ["dist/main.js"], {
     WARAQA_PORT: "3138",
     WARAQA_JWT_SECRET: "qa-only",
     ANTHROPIC_API_KEY: "",
+    // Parcours navigateur du mode démo (sans clé) : profil local explicite.
+    WARAQA_PROFILE: "local",
   },
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -164,6 +167,36 @@ try {
   await page.getByRole('button',{name:'Confirmer l’import des lignes acceptées'}).click();
   await page.getByRole('dialog').waitFor({state:'hidden'});
   results.push("Browser file upload, preview and explicit import confirmation");
+  // Dossier ZIP → lot suivi → relevé de déduction → XML SIMPL.
+  const { zipSync, strToU8 } = createRequire(root + "/backend/package.json")("fflate");
+  const zipCsv = "FACT_NUM,DESIGNATION,LIB_FRSS,ICE_FRS,IF,M_TTC,TAUX,ID_PAIE,DATE_PAIE,DATE_FAC\nZIP-1,ACHAT,Fournisseur Zip,001111111000011,11111111,1200,20%,4,15/09/2026,10/09/2026\nZIP-2,SERVICE,Prestataire Zip,002222222000022,22222222,1100,10%,2,18/09/2026,16/09/2026\n";
+  await page.getByLabel("Choisir des fichiers", { exact: true }).setInputFiles({ name: "dossier-septembre.zip", mimeType: "application/zip", buffer: Buffer.from(zipSync({ "Septembre/achats.csv": strToU8(zipCsv), "Septembre/note.txt": strToU8("ignoré") })) });
+  await page.getByRole("button", { name: "Importer 1 fichier(s)", exact: true }).click();
+  await page.getByText("dossier-septembre.zip · lot lancé · 1 pièce(s)", { exact: false }).waitFor();
+  await page.locator(".u-lot summary", { hasText: "terminé" }).waitFor();
+  await page.evaluate(async () => {
+    await fetch("/api/workspace/settings", { method: "PUT", headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionStorage.getItem("waraqa-token") }, body: JSON.stringify({ company: { iff: "18742558", regime: 1 } }) });
+  });
+  await page.locator(".sidebar").getByRole("button", { name: "Relevé de déduction", exact: true }).click();
+  await page.getByRole("button", { name: /^Valider \d+ ligne\(s\) conforme\(s\)$/ }).click();
+  await page.getByRole("dialog").getByRole("button", { name: /^Valider \d+ ligne\(s\)$/ }).click();
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  await page.locator(".u-table td b", { hasText: "ZIP-2" }).waitFor();
+  const xmlDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "XML EDI (SIMPL)", exact: true }).click();
+  const xmlFile = await xmlDownload;
+  assert.equal(xmlFile.suggestedFilename(), "Releve-deduction-2026-09.xml");
+  const xmlText = await readFile(await xmlFile.path(), "utf8");
+  assert(xmlText.includes("<identifiantFiscal>18742558</identifiantFiscal>") && xmlText.includes("<num>ZIP-2</num>"), "XML du relevé incomplet");
+  await page.screenshot({ path: root + "/docs/apercu-releve-deduction.png", fullPage: true });
+  results.push("ZIP folder import, deduction statement review and SIMPL XML download");
+  // Pièce jointe dans la discussion : le fichier choisi est bien envoyé.
+  await page.locator(".sidebar").getByRole("button", { name: "Discussion IA", exact: true }).click();
+  await page.getByLabel("Joindre des pièces au chat").setInputFiles({ name: "piece-chat.csv", mimeType: "text/csv", buffer: Buffer.from("FACT_NUM,LIB_FRSS,M_TTC,TAUX,DATE_FAC\nCHAT-1,Chat Fournisseur,240,20%,12/09/2026\n") });
+  await page.getByText("piece-chat.csv", { exact: false }).first().waitFor();
+  await page.getByRole("button", { name: "Envoyer le message" }).click();
+  await page.getByText("1 pièce(s) jointe(s) conservée(s)", { exact: false }).waitFor();
+  results.push("Chat attachment is uploaded and linked to the answer");
   for (const name of [
     "Rapprochement",
     "Désignations",
@@ -240,13 +273,13 @@ try {
   for(const width of [320,375,390,768,1024,1440,1920]) {
     for(const [orientation,height] of [['portrait',1000],['paysage',480]]) {
       await page.setViewportSize({width,height});
-      for(const route of ['chat','dashboard','releve','import','banque','designations','templates','exports','journal','reglages']) {
+      for(const route of ['chat','dashboard','releve','declaration','import','banque','designations','templates','exports','journal','reglages']) {
         await page.evaluate(route=>{location.hash='#/'+route;},route);
         await page.waitForTimeout(80);
         const d=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));
         assert(d.scroll<=d.width+1,`${route} ${width} ${orientation}: ${JSON.stringify(d)}`);
       }
-      matrix.push({width,height,orientation,pages:10,status:'passed',kind:'émulation viewport'});
+      matrix.push({width,height,orientation,pages:11,status:'passed',kind:'émulation viewport'});
     }
   }
   await page.setViewportSize({width:1440,height:1000});
@@ -255,7 +288,7 @@ try {
   const zoom=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));
   assert(zoom.scroll<=zoom.width+1,'zoom 200% CSS '+JSON.stringify(zoom));
   await page.evaluate(()=>{document.body.style.zoom='';});
-  results.push('14 viewport/orientation combinations × 10 pages; CSS zoom 200%');
+  results.push('14 viewport/orientation combinations × 11 pages; CSS zoom 200%');
   await writeFile(root+'/docs/appareils-'+(process.env.WARAQA_BROWSER || 'chromium')+'.json',JSON.stringify({date:new Date().toISOString(),browser:process.env.WARAQA_BROWSER || 'chromium',version:browser.version(),matrix,zoom:'CSS 200%, pas un appareil réel'},null,2));
   assert.deepEqual(errors, []);
   results.push("No browser console errors");

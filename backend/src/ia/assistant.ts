@@ -20,6 +20,8 @@ export interface AssistantHost {
   findInvoice(id: number): Promise<FactureEntity | null>;
   journalFor(factureId?: number, limit?: number): Promise<any[]>;
   bank(f: FactureEntity): boolean;
+  releve?(month: string, scope: string): Promise<any>;
+  lots?(): Promise<any[]>;
 }
 
 export interface ProposedAction {
@@ -36,7 +38,8 @@ export interface ProposedAction {
 
 export interface ToolTrace { name: string; input: any; summary: string; truncated?: boolean }
 
-const PAGES = ['dashboard', 'releve', 'import', 'banque', 'exports', 'journal', 'designations', 'reglages'];
+const PAGES = ['dashboard', 'releve', 'import', 'banque', 'declaration', 'exports', 'journal', 'designations', 'reglages'];
+const EXPORT_FORMATS = ['xlsx', 'pdf', 'csv', 'sage', 'releve-xml', 'releve-xlsx', 'releve-pdf'];
 const MONTH = { type: 'string', description: 'Période AAAA-MM. Par défaut : la période de la discussion.' };
 const MAX_TOOL_CHARS = 40_000;
 
@@ -92,13 +95,23 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
     input_schema: { type: 'object', properties: { statut: { type: 'string' }, limite: { type: 'integer' } }, additionalProperties: false },
   },
   {
+    name: 'releve_deduction',
+    description: 'Relevé de déduction TVA (DGI, modèle ADC082F-15I, art. 112 CGI) d’une période, calculé par le serveur : en-tête (raison sociale, IF, année, période, régime), lignes retenues, totaux par taux, lignes ÉCARTÉES avec la raison (IF/ICE manquant ou invalide, taux, mode de paiement, date, délai d’un an, doublon, non revue), alertes (espèces > 5 000 DH/jour, acomptes) et déductions tardives possibles (≤ 12 mois). Utiliser pour toute question sur la déclaration ou le relevé de TVA.',
+    input_schema: { type: 'object', properties: { mois: MONTH, brouillon: { type: 'boolean', description: 'true : inclure les lignes non encore revues.' } }, additionalProperties: false },
+  },
+  {
+    name: 'imports',
+    description: 'Imports en lot récents (dossier ZIP ou dossier Google Drive) : avancement, pièces traitées, lignes créées, erreurs par fichier.',
+    input_schema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
     name: 'journal',
     description: 'Dernières actions tracées (import, modification, revue, rapprochement, export…), éventuellement pour une ligne.',
     input_schema: { type: 'object', properties: { factureId: { type: 'integer' }, limite: { type: 'integer', description: '50 maximum.' } }, additionalProperties: false },
   },
   {
     name: 'proposer_action',
-    description: 'Propose à l’utilisateur un bouton d’action qu’IL confirmera (rien n’est exécuté par cet outil). ouvrir_ligne : ouvrir une ligne à corriger (factureId). ouvrir_page : naviguer (page). rapprocher : affecter un paiement bancaire (paymentId) à une facture (invoiceId), montant optionnel. exporter : télécharger le relevé (format xlsx, pdf, csv ou sage). 6 propositions maximum par réponse.',
+    description: 'Propose à l’utilisateur un bouton d’action qu’IL confirmera (rien n’est exécuté par cet outil). ouvrir_ligne : ouvrir une ligne à corriger (factureId). ouvrir_page : naviguer (page). rapprocher : affecter un paiement bancaire (paymentId) à une facture (invoiceId), montant optionnel. exporter : télécharger (xlsx, pdf, csv, sage = relevé de travail ; releve-xml = fichier EDI SIMPL du relevé de déduction ; releve-xlsx = relevé au modèle DGI ; releve-pdf). 6 propositions maximum par réponse.',
     input_schema: {
       type: 'object',
       properties: {
@@ -110,7 +123,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
         paymentId: { type: 'integer' },
         invoiceId: { type: 'integer' },
         montant: { type: 'number' },
-        format: { type: 'string', enum: ['xlsx', 'pdf', 'csv', 'sage'] },
+        format: { type: 'string', enum: EXPORT_FORMATS },
       },
       required: ['type', 'libelle'],
       additionalProperties: false,
@@ -127,7 +140,11 @@ export const ASSISTANT_RULES = `Tu es Waraqa, l’assistant du comptable de l’
 - Si un résultat est paginé ou tronqué, dis quelle part tu as examinée ; demande ou consulte la page suivante si nécessaire.
 - Les mouvements bancaires (relevé, avis de débit/virement hors COMMISSION) ne sont pas des achats et n’entrent pas dans les totaux TVA.
 - Convention douane : IF = ICE = « 1111 » n’est pas une anomalie.
+- ID_PAIE (idPaie) est le mode de paiement DGI : 1 espèces, 2 chèque, 3 prélèvement, 4 virement, 5 effet, 6 compensation, 7 autres.
 - Taux de TVA acceptés par l’application : 0 %, 7 %, 10 %, 14 %, 20 %.
+- Relevé de déduction (déclaration TVA) : appelle releve_deduction. Seules les lignes revues et conformes y figurent ; explique chaque ligne écartée par sa raison et propose de l’ouvrir (ouvrir_ligne). Pour le dépôt SIMPL, propose exporter au format releve-xml (et releve-xlsx pour le modèle Excel DGI). Dans ton texte, nomme-les « fichier XML SIMPL » et « Excel modèle DGI », jamais par leur code technique.
+- Quand tu cites un nombre de lignes, compte exactement les identifiants que tu donnes (ou reprends le total de l’outil).
+- Imports d’un dossier (ZIP ou lien Google Drive) : appelle imports pour l’avancement et les erreurs par fichier.
 
 ## Limites
 - Tu ne valides, ne modifies, n’archives, ne rapproches et n’exportes rien toi-même. Pour aider l’utilisateur à agir, utilise proposer_action : il confirmera en cliquant.
@@ -277,6 +294,31 @@ export class AssistantTools {
         const rows = await this.host.journalFor(input.factureId ? Number(input.factureId) : undefined, limit);
         return { summary: `Journal (${rows.length})`, data: rows.map(j => ({ action: j.action, ligne: j.factureId, par: j.saisiPar, le: j.horodatage })) };
       }
+      case 'releve_deduction': {
+        const month = this.month(input.mois);
+        if (!this.host.releve) throw new BadRequestException('Relevé indisponible.');
+        const r = await this.host.releve(month, input.brouillon ? 'all' : 'reviewed');
+        const byCode: Record<string, number> = {};
+        for (const e of r.ecartees) for (const c of e.controles) if (c.niveau === 'erreur') byCode[c.code] = (byCode[c.code] || 0) + 1;
+        return {
+          summary: `Relevé de déduction ${month} : ${r.lignes.length} ligne(s) retenue(s), ${r.ecartees.length} écartée(s)`,
+          data: {
+            mois: month, entete: r.header, entrepriseComplete: r.entrepriseComplete, cloture: r.cloture ? { le: r.cloture.createdAt, par: r.cloture.author } : null,
+            totaux: r.totaux, lignesRetenues: r.lignes.slice(0, 40).map((l: any) => ({ id: l.id, ord: l.ord, factNum: l.factNum, libFrss: l.libFrss, mTtc: l.mTtc, tva: l.tva, taux: l.taux, datePaie: l.datePaie })),
+            retenuesAffichees: Math.min(40, r.lignes.length), ecarteesParMotif: byCode,
+            ecartees: r.ecartees.slice(0, 60).map((e: any) => ({ id: e.ligne.id, factNum: e.ligne.factNum, libFrss: e.ligne.libFrss, mTtc: e.ligne.mTtc, erreurs: e.controles.filter((c: any) => c.niveau === 'erreur').map((c: any) => c.message) })),
+            alertes: r.alertes.slice(0, 40), deductionsTardivesPossibles: r.reports.length,
+          },
+        };
+      }
+      case 'imports': {
+        const lots = this.host.lots ? await this.host.lots() : [];
+        return {
+          summary: `${lots.length} import(s) en lot`,
+          data: lots.slice(0, 10).map((l: any) => ({ id: l.id, source: l.data.source, nom: l.data.label, statut: l.data.status, pieces: l.data.total, traitees: l.data.processed, lignes: l.data.items.reduce((n: number, x: any) => n + (x.lines || 0), 0),
+            fichiers: l.data.items.slice(0, 50).map((x: any) => ({ nom: x.name, etat: x.state, lignes: x.lines, erreur: x.error || undefined })), ignores: l.data.skipped?.length || 0 })),
+        };
+      }
       case 'proposer_action':
         return this.propose(input);
       default:
@@ -305,7 +347,7 @@ export class AssistantTools {
       if (!(montant > 0) || montant > item.remaining + 0.001 || montant > candidate.remaining + 0.001) throw new BadRequestException('Montant supérieur au disponible.');
       Object.assign(action, { paymentId: payment!.id, invoiceId: candidate.id, montant: r2(montant) });
     } else if (input.type === 'exporter') {
-      if (!['xlsx', 'pdf', 'csv', 'sage'].includes(input.format)) throw new BadRequestException('Format inconnu.');
+      if (!EXPORT_FORMATS.includes(input.format)) throw new BadRequestException('Format inconnu.');
       action.format = input.format;
     } else throw new BadRequestException('Type d’action inconnu.');
     this.actions.push(action);
@@ -331,6 +373,7 @@ const STEP_LABELS: Record<string, string> = {
   synthese_mois: 'Calcul de la synthèse', rechercher_lignes: 'Recherche des lignes', detail_ligne: 'Lecture d’une ligne',
   anomalies: 'Contrôle des anomalies', top_fournisseurs: 'Classement des fournisseurs', rapprochement: 'Analyse des paiements',
   pieces: 'Lecture des pièces', journal: 'Lecture du journal', proposer_action: 'Préparation des actions',
+  releve_deduction: 'Contrôle du relevé de déduction', imports: 'Suivi des imports',
 };
 
 /** Dernier bloc du dernier message marqué pour le cache : l'historique déjà vu est relu à 10 % du prix. */
@@ -347,7 +390,9 @@ function withCacheBreakpoint(messages: Anthropic.MessageParam[]): Anthropic.Mess
 export async function runAssistant(input: AssistantRunInput) {
   const messages = [...input.messages];
   const maxSteps = input.maxSteps || 8;
-  let lastText = '';
+  // Texte rédigé à chaque étape : l'analyse écrite avant un dernier appel d'outil (ex. proposer_action)
+  // fait partie de la réponse ; seules les courtes annonces (« Je consulte… ») sont omises.
+  const parts: string[] = [];
   let truncated = false;
   for (let step = 0; step < maxSteps; step++) {
     await input.beforeCall();
@@ -362,7 +407,7 @@ export async function runAssistant(input: AssistantRunInput) {
       messages: withCacheBreakpoint(messages),
     } as any, input.signal, { stopReasons: ['end_turn', 'tool_use', 'max_tokens'], onUsage: input.onUsage });
     const text = response.content.filter(b => b.type === 'text').map((b: any) => b.text).join('\n').trim();
-    if (text) lastText = text;
+    if (text) parts.push(text);
     if (response.stop_reason === 'max_tokens') { truncated = true; break; }
     if (response.stop_reason !== 'tool_use') break;
     messages.push({ role: 'assistant', content: response.content as any });
@@ -376,6 +421,7 @@ export async function runAssistant(input: AssistantRunInput) {
     messages.push({ role: 'user', content: results });
     if (step === maxSteps - 1) truncated = true;
   }
+  let lastText = parts.filter((p, i) => i === parts.length - 1 || p.length >= 200).join('\n\n');
   if (!lastText) lastText = 'Je n’ai pas pu terminer l’analyse dans la limite d’étapes. Posez une question plus ciblée (un mois, un fournisseur, une ligne).';
   return { text: lastText, truncated };
 }
