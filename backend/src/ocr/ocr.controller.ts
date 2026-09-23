@@ -1,3 +1,4 @@
+import { liveOcrWanted } from '../common/profile';
 import {
   BadRequestException,
   Controller,
@@ -49,7 +50,7 @@ export class OcrController {
       throw new BadRequestException('Aucun fichier reçu (champ attendu : "fichier").');
     }
 
-    if (process.env.NODE_ENV !== 'test' && (process.env.WARAQA_IA_MODE !== 'live' || !process.env.ANTHROPIC_API_KEY)) throw new BadRequestException('Sans clé, utilisez Importer : stockage et saisie manuelle, sans extraction inventée.');
+    if (process.env.NODE_ENV !== 'test' && (!liveOcrWanted() || !process.env.ANTHROPIC_API_KEY)) throw new BadRequestException('Sans clé, utilisez Importer : stockage et saisie manuelle, sans extraction inventée.');
     const resultat = await this.ocrService.extraire(fichier.buffer, fichier.originalname);
 
     const facturesCreees: FactureEntity[] = [];

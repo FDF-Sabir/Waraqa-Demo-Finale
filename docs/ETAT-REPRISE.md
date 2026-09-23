@@ -1,4 +1,21 @@
-# État de reprise — 23 septembre 2026 · version 4.2.0
+# État de reprise — 23 septembre 2026 · version 4.3.0 (profil en ligne)
+
+## Ajouté en 4.3.0 (branche `online-drive`)
+
+- **Profil `online`** (`WARAQA_PROFILE`, défaut) — `backend/src/common/profile.ts` : clé présente ⇒ mode IA `live` imposé (réglages, extraction des pièces, route historique `/api/ocr`). `WARAQA_PROFILE=local` restaure le comportement 4.2.
+- **Google Drive** — `backend/src/unified/integrations.service.ts` : OAuth PKCE `openid email drive.file`, compte verrouillé par `GOOGLE_ALLOWED_EMAIL` (e-mail vérifié du id_token, révocation si refus), identifiants saisis dans l’UI (JSON Google ou champs) écrits dans `backend/.env`, arborescence `Waraqa/{Pièces/AAAA-MM, Exports/AAAA-MM, Snapshots, Sauvegardes}` créée et recréée si supprimée.
+- **File durable** `drive_job` (table `workspace_records`, aucune migration) : pièces (à l’import), exports (boîte d’envoi `data/drive-outbox/`), snapshots PDF, sauvegarde quotidienne + rotation (14) ; reprise 2^n min plafonnée à 6 h, 8 essais ; dédoublonnage SHA-256 ; rafraîchissement du jeton sur 401 ; `invalid_grant` ⇒ « reconnexion nécessaire » sans perte ; cycle toutes les 60 s et 1,5 s après chaque ajout.
+- Routes : `PUT /api/workspace/drive/credentials`, `POST /api/workspace/drive/sync` ; callback redirigé vers `/?drive=ok|erreur#/reglages`.
+- Interface : Réglages → Intégrations (étapes 1-2-3, état, historique, Synchroniser maintenant, Déconnecter) ; Assistant IA verrouillé en connecté ; libellés profil.
+- Lanceur : complète `backend/.env` avec les nouvelles variables sans modifier les existantes, affiche Internet/IA/Drive, ouvre le navigateur.
+
+Résultats 4.3.0 : 92 unitaires, **87 e2e** (dont 9 `online-drive.e2e-spec.ts`, Google simulé), 17 parcours intégrés, 11 groupes navigateur — tous réussis.
+
+**Non vérifié ici** : appel réel à l’API Anthropic et à Google (réseau du bac à sable fermé, clé non utilisée). Prochaine action : sur le poste, lancer, vérifier « IA Claude connectée » au démarrage, **Tester la connexion**, puis suivre `docs/GOOGLE-DRIVE.md` et contrôler `Mon Drive/Waraqa/`.
+
+---
+
+## Historique — version 4.2.0
 
 ## Où en est Waraqa
 

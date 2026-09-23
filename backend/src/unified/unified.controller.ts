@@ -31,9 +31,21 @@ export class UnifiedController {
   constructor(private service: UnifiedService, private integrations: IntegrationsService) {}
   @UseGuards(JwtAuthGuard) @Get('integrations') integrationsStatus(@UtilisateurCourant() u:any) {return this.integrations.status(u);}
   @UseGuards(JwtAuthGuard) @Post('drive/start') driveStart(@UtilisateurCourant() u:any) {return this.integrations.start(u);}
-  @Get('drive/callback') async driveCallback(@Query('state') state:string,@Query('code') code:string,@Res() res:Response) {await this.integrations.callback(state,code);res.setHeader('Referrer-Policy','no-referrer');res.redirect('/#/reglages');}
+  @Get('drive/callback') async driveCallback(@Query('state') state:string,@Query('code') code:string,@Query('error') error:string,@Res() res:Response) {
+    res.setHeader('Referrer-Policy','no-referrer');
+    try {
+      if (error) throw new BadRequestException(error==='access_denied'?'Autorisation Google annulée.':'Google a refusé l’autorisation.');
+      await this.integrations.callback(state,code);
+      res.redirect('/?drive=ok#/reglages');
+    } catch (e:any) {
+      const msg=String(e?.response?.message || e?.message || 'Autorisation Google impossible.').slice(0,300);
+      res.redirect('/?drive=erreur&message='+encodeURIComponent(msg)+'#/reglages');
+    }
+  }
+  @UseGuards(JwtAuthGuard) @Put('drive/credentials') driveCredentials(@UtilisateurCourant() u:any,@Body() b:any) {return this.integrations.setCredentials(u,b);}
+  @UseGuards(JwtAuthGuard) @Post('drive/sync') driveSync(@UtilisateurCourant() u:any) {return this.integrations.syncNow(u);}
   @UseGuards(JwtAuthGuard) @Post('drive/disconnect') driveDisconnect(@UtilisateurCourant() u:any) {return this.integrations.disconnect(u);}
-  @UseGuards(JwtAuthGuard) @Post('drive/upload') async driveUpload(@UtilisateurCourant() u:any,@Body() b:any) {await this.service.admin(u);return this.integrations.upload(u,await this.service.get(b.documentId,'document'),await this.service.documentFile(b.documentId),(await this.service.settings()).integrations.driveFolder);}
+  @UseGuards(JwtAuthGuard) @Post('drive/upload') async driveUpload(@UtilisateurCourant() u:any,@Body() b:any) {await this.service.admin(u);return this.integrations.upload(u,await this.service.get(b.documentId,'document'));}
   @UseGuards(JwtAuthGuard) @Post('email/test-local') emailTest(@UtilisateurCourant() u:any) {return this.integrations.localMail(u);}
   @UseGuards(JwtAuthGuard) @Get('email/outbox') emailOutbox(@UtilisateurCourant() u:any) {return this.integrations.outbox(u);}
   @UseGuards(JwtAuthGuard) @Get('diagnostics') diagnostics(@UtilisateurCourant() u:any) {return this.service.diagnostics(u);}

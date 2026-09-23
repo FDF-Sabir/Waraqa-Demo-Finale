@@ -1366,3 +1366,9 @@ pre {
 .u-md ul { list-style: disc; }
 .u-md ol { list-style: decimal; }
 .u-md li { display: list-item; }
+.u-mini-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+.u-mini-table th, .u-mini-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #edf0ee; overflow-wrap: anywhere; }
+.u-mini-table th { color: #7b867e; font-weight: 600; }
+.u-ai-card code { display: block; padding: 8px 10px; background: #f0f3ec; border-radius: 6px; font-size: 12px; }
+.u-ai-card a.secondary { display: inline-flex; align-items: center; text-decoration: none; }
+.u-ai-card .u-form p { font-size: 13px; line-height: 1.55; }

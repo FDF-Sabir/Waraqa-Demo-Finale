@@ -15,7 +15,7 @@ export default function Settings({
   run: Run;
   refresh: () => Promise<void>;
 }) {
-  const [tab, setTab] = useState("company"),
+  const [tab, setTab] = useState(() => new URLSearchParams(location.search).get("drive") ? "integrations" : "company"),
     [form, setForm] = useState<any>(structuredClone(settings)),
     [prefs, setPrefs] = useState<any>(null),
     [users, setUsers] = useState<any[]>([]),
@@ -294,7 +294,15 @@ export default function Settings({
             <>
               <h2>Connexions & automatisation</h2>
               {user.role === 'admin' ? <Integrations run={run} /> : <p>Les connecteurs externes sont gérés par l’administrateur.</p>}
-              {field('integrations','driveFolder','Identifiant du dossier Google Drive autorisé')}
+              <div className="u-task">
+                <span><b>Synchronisation Google Drive automatique</b><small>Chaque pièce importée, export, snapshot est envoyé dès que possible (file durable, reprise après coupure).</small></span>
+                <input type="checkbox" aria-label="Synchronisation Drive automatique" disabled={!admin} checked={form.integrations.driveAutoSync !== false} onChange={e=>set('integrations','driveAutoSync',e.target.checked)} />
+              </div>
+              <div className="u-task">
+                <span><b>Sauvegarde complète quotidienne dans Drive</b><small>Base et pièces originales (sans la clé API ni backend/.env), dossier Waraqa/Sauvegardes.</small></span>
+                <input type="checkbox" aria-label="Sauvegarde Drive quotidienne" disabled={!admin} checked={form.integrations.driveDailyBackup !== false} onChange={e=>set('integrations','driveDailyBackup',e.target.checked)} />
+              </div>
+              <label>Sauvegardes conservées dans Drive (1 à 90)<input type="number" min="1" max="90" disabled={!admin} value={form.integrations.driveBackupKeep ?? 14} onChange={e=>set('integrations','driveBackupKeep',Number(e.target.value))} /></label>
               <label>Fuseau du planificateur<input value={form.integrations.timeZone || 'Africa/Casablanca'} onChange={e=>set('integrations','timeZone',e.target.value)} /></label>
               <label>Rattrapage au démarrage (jours, maximum 7)<input type="number" min="0" max="7" value={form.integrations.catchUpDays || 0} onChange={e=>set('integrations','catchUpDays',Number(e.target.value))} /></label>
               <p>Un rattrapage photographie les données au moment du redémarrage. Il ne reconstitue pas leur état historique.</p>

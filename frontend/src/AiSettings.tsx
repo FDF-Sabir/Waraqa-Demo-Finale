@@ -68,8 +68,10 @@ export default function AiSettings({
             <b>{status?.keyConfigured ? "Clé API enregistrée" : "Aucune clé API"}</b>
             <small>
               {status?.keyConfigured
-                ? `${status.keyMask} · conservée dans backend/.env sur ce poste, jamais renvoyée au navigateur.`
-                : "Sans clé, Waraqa fonctionne en mode démo (analyses locales, saisie manuelle)."}
+                ? `${status.keyMask} · conservée dans backend/.env sur ce poste, jamais renvoyée au navigateur.${form.ai.modeLocked ? " IA connectée en permanence (profil en ligne)." : ""}`
+                : form.ai.profile === "online"
+                  ? "Collez la clé ci-dessous : le mode connecté s’active aussitôt, sans redémarrage ni bascule."
+                  : "Sans clé, Waraqa fonctionne en mode démo (analyses locales, saisie manuelle)."}
             </small>
           </div>
         </header>
@@ -135,7 +137,7 @@ export default function AiSettings({
               : test.error}
           </div>
         )}
-        {test?.ok && form.ai.mode !== "live" && admin && (
+        {test?.ok && form.ai.mode !== "live" && !form.ai.modeLocked && admin && (
               <button
                 type="button"
                 className="primary u-activate"
@@ -154,12 +156,13 @@ export default function AiSettings({
       <div className="u-form">
         <label>
           Mode
-          <select disabled={!admin} value={form.ai.mode} onChange={(e) => set("ai", "mode", e.target.value)}>
+          <select disabled={!admin || form.ai.modeLocked} value={form.ai.mode} onChange={(e) => set("ai", "mode", e.target.value)}>
             <option value="demo">Démo — analyses locales, aucun appel externe</option>
             <option value="live" disabled={!form.ai.keyConfigured}>
               Connecté — Claude lit les pièces et répond dans la discussion
             </option>
           </select>
+          {form.ai.modeLocked && <small>Profil en ligne : tant qu’une clé est enregistrée, l’IA reste connectée. Supprimer la clé ramène au mode démo.</small>}
         </label>
         <label>
           Modèle

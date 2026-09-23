@@ -1,3 +1,4 @@
+import { onlineProfile } from '../common/profile';
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { preparerContenu } from './preparation-contenu';
@@ -39,7 +40,7 @@ export class OcrService {
   private get apiKey(): string { return apiKey(); }
 
   private get modeActif(): 'mock' | 'live' {
-    if (this.modeEnvVar === 'live') {
+    if (this.modeEnvVar === 'live' || onlineProfile()) {
       if (!this.apiKey) {
         this.logger.warn(
           'WARAQA_IA_MODE=live mais ANTHROPIC_API_KEY est absente — bascule automatique en mode mock.',
@@ -52,7 +53,7 @@ export class OcrService {
   }
 
   async extraire(fichier: Buffer, nomFichier: string): Promise<ResultatExtraction> {
-    if (process.env.NODE_ENV !== 'test' && (this.modeEnvVar !== 'live' || !this.apiKey)) {
+    if (process.env.NODE_ENV !== 'test' && (!(this.modeEnvVar === 'live' || onlineProfile()) || !this.apiKey)) {
       throw new ServiceUnavailableException('OCR connecté indisponible. Importez via Pièces pour conserver le document et saisir les lignes manuellement. Aucune extraction simulée.');
     }
     const contenu = await preparerContenu(fichier, nomFichier);

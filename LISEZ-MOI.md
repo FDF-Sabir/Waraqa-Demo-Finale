@@ -1,35 +1,40 @@
-# Waraqa 4.2 — espace comptable local avec assistant IA
+# Waraqa 4.3 — application locale, fonctionnement en ligne
 
-Nouvelle application assemblée à partir des **deux archives fournies** : `Waraqa V2(1).zip` et `Waraqa-FrontEnd.zip`. Un seul backend, une seule base, une seule interface ; ce ZIP ne juxtapose pas deux applications à lancer séparément.
+Waraqa s’installe et se lance **sur votre poste**, mais dès son démarrage il travaille comme une version hébergée (**profil en ligne**, par défaut) :
 
-## Démarrer (sans clé API)
+- **IA Claude connectée en permanence** dès que votre clé est dans `backend/.env` : lecture des pièces, discussion, actions proposées. Aucun mode démo à basculer.
+- **Google Drive de saberrochdi509@gmail.com synchronisé automatiquement** : pièces importées, exports, snapshots PDF et sauvegarde complète quotidienne dans `Mon Drive/Waraqa/`.
+- Données de travail sur le poste (SQLite + pièces originales) : l’application reste utilisable sans Internet ; l’IA et Drive reprennent au retour du réseau.
+
+## Démarrer
 
 1. Installer **Node.js 22 ou 24**, puis extraire complètement ce ZIP.
-2. Sous Windows : double-cliquer sur `DEMARRER-Windows.bat`.
-   Sous Ubuntu/macOS : ouvrir un terminal dans ce dossier et lancer `bash DEMARRER.sh`.
-   Autre possibilité : `npm start`.
-3. La première ouverture installe les dépendances backend. **Internet est nécessaire pour cette installation**, mais aucune clé IA n’est requise.
-4. Ouvrir **http://localhost:3000**. Créer le premier compte : il devient administrateur de cet espace local. Aucun mot de passe prédéfini n’est livré.
-5. Dans **Vue d’ensemble**, cliquer sur **Charger les exemples**. Six lignes fictives sont créées dans la période affichée : achats, service, pièce incomplète, douane, paiement orphelin et frais.
-6. Ouvrir **Discussion IA**, sélectionner un modèle de prompt et envoyer le message. Sans clé, les analyses locales utilisent les vraies données de votre démo ; avec la clé (section suivante), Claude répond en consultant ces mêmes données.
+   **Mise à jour** : extraire **par-dessus** votre dossier Waraqa existant. `backend/.env` (votre clé API, votre secret) et `backend/data/` (comptes, pièces, conversations) sont conservés ; les nouveaux réglages sont ajoutés automatiquement au démarrage sans toucher aux valeurs existantes.
+2. Windows : double-cliquer sur `DEMARRER-Windows.bat`. Ubuntu/macOS : `bash DEMARRER.sh`. Ou `npm start`.
+3. Le lanceur affiche l’état **Internet / IA Claude / Google Drive** puis ouvre le navigateur sur **http://localhost:3000** (toujours `localhost`, pas `127.0.0.1`, pour le retour de Google).
+4. Première installation uniquement : créer le premier compte (il devient administrateur).
 
-Laisser le terminal ouvert. Arrêter avec Ctrl+C. Les prochaines ouvertures ne réinstallent pas les dépendances. Les fichiers compilés de l’interface et du backend sont inclus.
+Laisser la fenêtre ouverte (la synchronisation Drive tourne tant que Waraqa est lancé). Ctrl+C pour arrêter.
 
-L’application est en français et les montants sont en MAD. Il s’agit d’un espace comptable local partagé entre ses utilisateurs, pas d’une plateforme multi-entreprises isolées.
+## IA Claude
 
-## Activer l’IA avec votre clé (2 minutes, sans redémarrer)
+- Clé déjà présente dans `backend/.env` : rien à faire, le lanceur affiche « IA Claude connectée en permanence (sk-ant-…XXXX) ».
+- Sinon : **Réglages → Assistant IA** → coller la clé → **Enregistrer la clé** → **Tester la connexion**. Le mode connecté s’active immédiatement, sans redémarrage.
+- La clé reste dans `backend/.env` sur ce poste : jamais renvoyée au navigateur, jamais écrite dans le journal, **jamais envoyée dans Google Drive** ni incluse dans les sauvegardes. Ne la mettez pas dans un ZIP, une capture ou une conversation.
+- Budget mensuel (10 $ par défaut), modèle et niveau de réflexion : Réglages → Assistant IA. Au-delà du budget, les appels sont bloqués.
+- Crédit API requis (Console Claude → Billing) : les crédits du chat claude.ai ne financent pas l’API.
 
-1. Créer la clé dans la **Console Claude** (platform.claude.com → API keys), de préférence dans l’espace de travail **Default**. Copier la clé entière : elle n’est affichée qu’une fois.
-2. Vérifier que l’organisation a du **crédit API** (Console → Billing → Add funds). Les crédits achetés sur claude.ai pour le chat ne financent pas l’API.
-3. Dans Waraqa, connecté en administrateur : **Réglages → Assistant IA** → coller la clé → **Enregistrer la clé**.
-4. **Tester la connexion** : le message indique le modèle, le délai et le coût du test, ou la cause exacte d’un refus (clé invalide, crédit insuffisant, modèle introuvable, portée « Organisation »…).
-5. **Activer le mode connecté**. Régler au besoin le modèle (Sonnet 5 recommandé), le niveau de réflexion et le **budget mensuel** (10 $ par défaut ; au-delà, les appels sont bloqués).
+## Google Drive
 
-La clé est enregistrée dans `backend/.env` sur ce poste, jamais renvoyée au navigateur ni écrite dans le journal. Ne la mettez jamais dans une capture d’écran, un ZIP, un dépôt Git ou une conversation. **Supprimer la clé** dans les réglages repasse l’application en mode démo.
+Une seule mise en service de 5 minutes : créer l’identifiant OAuth dans Google Cloud avec votre compte, le charger dans **Réglages → Intégrations**, puis **Connecter Google Drive**. Pas-à-pas complet : **`docs/GOOGLE-DRIVE.md`**.
 
-Validation réelle facultative (données fictives, base temporaire, plafond 0,30 $) : `npm run test:ia`. Le rapport est écrit dans `docs/tests-ia-reelle.json`.
+- Seul `saberrochdi509@gmail.com` est accepté (réglable par `GOOGLE_ALLOWED_EMAIL` dans `backend/.env`).
+- Droit minimal `drive.file` : Waraqa ne voit que les fichiers qu’il crée.
+- File durable, reprises automatiques, aucun doublon ; état, historique et « Synchroniser maintenant » dans Réglages → Intégrations.
 
-Détails, coûts et cache : `docs/IA-ASSISTANT.md`.
+## Revenir au comportement démo
+
+Dans `backend/.env` : `WARAQA_PROFILE=local`, puis relancer. Le mode connecté redevient manuel et aucun transfert Drive automatique n’a lieu.
 
 ## Fonctions réunies
 
@@ -64,7 +69,7 @@ Détails, coûts et cache : `docs/IA-ASSISTANT.md`.
 | Exports | Fichiers réellement générés et téléchargés |
 | Sage 100 | CSV équilibré à mapper dans l’assistant d’import ; aucune connexion directe à Sage |
 | DGI | Tableau de travail EDI, aucun XML officiel ni dépôt automatique/certification |
-| Google Drive | Connecteur OAuth implémenté ; configuration et essai sur compte réel restent nécessaires |
+| Google Drive | Synchronisation automatique implémentée et testée contre un Google simulé (OAuth, compte verrouillé, dossiers, reprises, jeton expiré/révoqué) ; première connexion réelle à faire avec votre identifiant OAuth (`docs/GOOGLE-DRIVE.md`) |
 | Email / push hors application | Non raccordés ; la cloche interne fonctionne |
 | 2FA | TOTP et codes de secours implémentés, vérifiés par tests automatisés locaux |
 | Snapshots planifiés | Locaux, avec paramètres de fuseau horaire et rattrapage ; nécessitent le serveur actif |
@@ -107,7 +112,7 @@ L’archivage retire une ligne des vues actives et des exports ; le journal est 
 
 ## Mise à jour depuis une version précédente
 
-Extraire ce ZIP **par-dessus** le dossier existant : il ne contient ni `backend/data/` ni `backend/.env`, vos comptes, pièces, conversations et secrets sont donc conservés. Les nouveaux réglages IA prennent leurs valeurs par défaut. Relancer avec `DEMARRER-Windows.bat` ou `bash DEMARRER.sh`.
+Extraire ce ZIP **par-dessus** le dossier existant : il ne contient ni `backend/data/` ni `backend/.env`, vos comptes, pièces, conversations, clé API et secrets sont donc conservés. Les variables nouvelles (`WARAQA_PROFILE`, `GOOGLE_ALLOWED_EMAIL`, `WARAQA_OPEN_BROWSER`) sont ajoutées automatiquement à `backend/.env` au démarrage. Relancer avec `DEMARRER-Windows.bat` ou `bash DEMARRER.sh`.
 
 ## Développement
 

@@ -3,6 +3,8 @@ import { archivePdf } from "./archive-pdf";
 import { IaGateway } from "../ocr/ia-gateway";
 import { apiKey, cost, KEY_PATTERN, maskedKey, MODEL_PRESETS, workspaceId, writeEnv } from "../ia/ia-config";
 import { ASSISTANT_RULES, AssistantTools, runAssistant } from "../ia/assistant";
+import { onlineProfile, profile } from "../common/profile";
+import { IntegrationsService } from "./integrations.service";
 import {
   BadRequestException,
   ConflictException,
@@ -95,7 +97,7 @@ const defaults = {
     tva: "345520",
     fournisseur: "441100",
   },
-  integrations: { driveFolder: "", driveEnabled: false, autoExport: false, timeZone: "Africa/Casablanca", catchUpDays: 0 },
+  integrations: { driveFolder: "", driveEnabled: false, autoExport: false, timeZone: "Africa/Casablanca", catchUpDays: 0, driveAutoSync: true, driveDailyBackup: true, driveBackupKeep: 14 },
 };
 const builtinTemplates = [
   {
@@ -160,6 +162,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     private factures: FacturesService,
     private journal: JournalService,
     private ocr: OcrService,
+    private drive: IntegrationsService,
   ) {}
   async onModuleInit() {
     await mkdir(this.storage, { recursive: true });
@@ -240,23 +243,34 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
   }
   async diagnostics(user: any) {
     await this.admin(user);
-    return { version:'4.2.0', node:process.version, uptimeSeconds:Math.floor(process.uptime()), memory:process.memoryUsage(), invoices:await this.invoices.count(), documents:await this.records.countBy({kind:'document'}), importing:this.importing, activeChats:this.busyChats.size, apiKeyConfigured:Boolean(apiKey()), iaCallsInFlight: IaGateway.busy };
+    return { version:'4.3.0', profile:profile(), node:process.version, uptimeSeconds:Math.floor(process.uptime()), memory:process.memoryUsage(), invoices:await this.invoices.count(), documents:await this.records.countBy({kind:'document'}), importing:this.importing, activeChats:this.busyChats.size, apiKeyConfigured:Boolean(apiKey()), iaCallsInFlight: IaGateway.busy };
   }
   async status() {
+    const settings = await this.settings();
     return {
-      version: "4.2.0",
+      version: "4.3.0",
       configured: Boolean(apiKey()),
       needsSetup: (await this.users.count()) === 0,
+      profile: profile(),
+      aiLive: settings.ai.mode === "live",
     };
+  }
+  /** En profil en ligne, une clé présente impose le mode connecté (aucune bascule manuelle). */
+  private aiLocked() {
+    return onlineProfile() && Boolean(apiKey());
   }
   async settings() {
     const r = await this.get("settings");
+    const locked = this.aiLocked();
     return {
       ...r.data,
       integrations: { ...defaults.integrations, ...r.data.integrations },
       ai: {
         ...defaults.ai,
         ...r.data.ai,
+        ...(locked ? { mode: "live" } : {}),
+        modeLocked: locked,
+        profile: profile(),
         keyConfigured: Boolean(apiKey()),
         keyMask: maskedKey(),
         workspaceConfigured: Boolean(workspaceId()),
@@ -300,14 +314,13 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException("Préférence invalide.");
     try { new Intl.DateTimeFormat('fr-FR', {timeZone:result.integrations.timeZone}).format(); } catch { throw new BadRequestException('Fuseau horaire invalide.'); }
     if (!Number.isInteger(result.integrations.catchUpDays) || result.integrations.catchUpDays<0 || result.integrations.catchUpDays>7) throw new BadRequestException('Rattrapage : 0 à 7 jours.');
-    if (result.integrations.driveEnabled)
-      throw new BadRequestException(
-        "Connecteur Drive non configuré : conserver désactivé.",
-      );
+    if (!Number.isInteger(result.integrations.driveBackupKeep) || result.integrations.driveBackupKeep < 1 || result.integrations.driveBackupKeep > 90)
+      throw new BadRequestException("Sauvegardes Drive conservées : 1 à 90.");
+    if (this.aiLocked()) result.ai.mode = "live";
     for (const key of ["journal", "charge", "tva", "fournisseur"])
       if (!/^[\w-]{1,20}$/.test(result.export[key]))
         throw new BadRequestException("Code comptable invalide.");
-    for (const k of ["keyConfigured", "keyMask", "workspaceConfigured", "presets"]) delete result.ai[k];
+    for (const k of ["keyConfigured", "keyMask", "workspaceConfigured", "presets", "modeLocked", "profile"]) delete result.ai[k];
     await this.save("settings", "settings", result);
     await this.journal.ecrire({
       action: "reglages_modifies",
@@ -575,6 +588,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       errors: [],
     };
     await this.save(id, "document", document);
+    await this.drive.enqueueSafe("document", id, file.originalname, document.createdAt.slice(0, 7));
     return this.processDocument(id, user, preview);
   }
   async cancelImport(id: string) {
@@ -934,6 +948,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       ...this.actor(user),
       details: { id: saved.id, month },
     });
+    await this.drive.enqueueSafe("snapshot", saved.id, `Waraqa-snapshot-${month}-${saved.id.slice(-8)}.pdf`, month);
     return saved;
   }
   async export(month: string, format: string, scope: string, user: any, examples = false) {
@@ -1033,11 +1048,9 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       ...this.actor(user),
       details: { format, month, count: rows.length, scope, examples, mappingVersion: 1, ids: rows.map(f => f.id), sha256: createHash("sha256").update(buffer).digest("hex") },
     });
-    return {
-      buffer,
-      mime,
-      name: `Waraqa-${format}-${month}${examples ? "-EXEMPLES" : ""}${scope === "all" ? "-BROUILLON" : ""}.${extension}`,
-    };
+    const name = `Waraqa-${format}-${month}${examples ? "-EXEMPLES" : ""}${scope === "all" ? "-BROUILLON" : ""}.${extension}`;
+    await this.drive.enqueueExport(name, buffer, month);
+    return { buffer, mime, name };
   }
   private csvCell(value: any) {
     let s = String(value ?? "");
@@ -1054,6 +1067,8 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       keyMask: maskedKey(),
       workspaceConfigured: Boolean(workspaceId()),
       mode: settings.ai.mode,
+      modeLocked: settings.ai.modeLocked,
+      profile: settings.ai.profile,
       model: settings.ai.model,
       budgetUsd: settings.ai.monthlyBudgetUsd,
       usage: await this.iaUsage(month),
@@ -1070,6 +1085,11 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     if (ws && !/^[A-Za-z0-9_-]{4,100}$/.test(ws)) throw new BadRequestException("Identifiant d’espace de travail invalide.");
     writeEnv("ANTHROPIC_API_KEY", key);
     if (ws !== undefined) writeEnv("ANTHROPIC_WORKSPACE_ID", ws);
+    if (onlineProfile()) {
+      const r = await this.get("settings");
+      r.data.ai = { ...defaults.ai, ...r.data.ai, mode: "live" };
+      await this.save("settings", "settings", r.data);
+    }
     await this.journal.ecrire({ action: "cle_ia_enregistree", ...this.actor(user), details: { cle: maskedKey(), espace: Boolean(workspaceId()) } });
     return this.aiStatus(user);
   }

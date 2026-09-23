@@ -435,10 +435,10 @@ export default function App() {
         </nav>
         <div className="sidebottom">
           <div className="u-mode">
-            <span className="u-dot" />
+            <span className={"u-dot" + (settings?.ai.mode === "live" ? " ok" : "")} />
             {settings?.ai.mode === "live"
               ? "IA connectée"
-              : "Mode démo · sans clé"}
+              : settings?.ai.profile === "online" ? "IA : clé à enregistrer" : "Mode démo · sans clé"}
           </div>
           <div className="company">
             <div className="avatar">{user.nom?.slice(0, 2).toUpperCase()}</div>
@@ -815,11 +815,11 @@ export default function App() {
             />
           )}
           <footer>
-            Waraqa · Démo unifiée ·{" "}
+            Waraqa 4.3 · {settings?.ai.profile === "online" ? "Profil en ligne" : "Profil local"} ·{" "}
             {settings?.ai.mode === "live"
               ? "IA connectée"
-              : "Mode démo : analyses locales sans IA externe"}{" "}
-            · Données conservées sur cette installation
+              : "Analyses locales sans IA externe"}{" "}
+            · Données conservées sur ce poste{settings?.ai.profile === "online" ? ", copie Google Drive une fois connecté" : ""}
           </footer>
         </main>
       </div>

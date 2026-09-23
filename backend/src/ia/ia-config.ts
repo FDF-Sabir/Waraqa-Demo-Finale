@@ -29,8 +29,11 @@ export function workspaceId(): string {
   return (process.env.ANTHROPIC_WORKSPACE_ID || '').trim();
 }
 
+export type EnvName = 'ANTHROPIC_API_KEY' | 'ANTHROPIC_WORKSPACE_ID' | 'GOOGLE_CLIENT_ID' | 'GOOGLE_CLIENT_SECRET';
+
 /** Remplace (ou ajoute) une ligne NOM=valeur dans .env sans toucher au reste, puis l'applique. */
-export function writeEnv(name: 'ANTHROPIC_API_KEY' | 'ANTHROPIC_WORKSPACE_ID', value: string) {
+export function writeEnv(name: EnvName, value: string) {
+  if (/[\r\n]/.test(value)) throw new Error('Valeur multiligne refusée.');
   const path = envPath();
   const content = existsSync(path) ? readFileSync(path, 'utf8') : '';
   const line = `${name}=${value}`;

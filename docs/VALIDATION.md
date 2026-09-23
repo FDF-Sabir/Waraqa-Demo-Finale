@@ -1,5 +1,19 @@
 # Validation locale — 23 septembre 2026 (version 4.2.0)
 
+## Version 4.3.0 — profil en ligne et Google Drive (23/09/2026)
+
+| Commande | Résultat |
+|---|---|
+| `npm run build` | OK (NestJS, TypeScript frontend, Vite) |
+| `npm test` | 92 unitaires · 87 e2e · 17 parcours intégrés — 0 échec |
+| `npm run test:ui` (Chromium) | 11 groupes réussis, aucune erreur console |
+
+`backend/test/online-drive.e2e-spec.ts` (Google simulé en mémoire, aucun réseau) : IA imposée en connecté dès l’enregistrement de la clé ; identifiants OAuth validés (JSON avec URI de redirection vérifiée), secret jamais renvoyé ; compte non autorisé refusé et révoqué ; bon compte accepté avec mise en file de l’existant ; arborescence créée, pièce + export + snapshot + sauvegarde transférés ; idempotence ; racine supprimée recréée ; coupure réseau puis reprise ; jeton tourné rafraîchi ; accès révoqué ⇒ reconnexion demandée, file conservée, aucun appel automatique ; déconnexion.
+
+Vérification manuelle : lancement réel via `scripts/start.cjs` avec un `.env` 4.2 (variables complétées sans modifier les existantes), écrans Intégrations (non configuré, prêt, connecté/reconnexion) et Assistant IA capturés, pas de débordement horizontal à 390 px.
+
+Non vérifié : appels réels Anthropic et Google depuis cet environnement (sortie réseau fermée).
+
 ## Version 4.2.0 — IA connectée
 
 Environnement : Linux, Node.js 22.22.2, Chromium Playwright. Base temporaire à chaque exécution, données fictives.
