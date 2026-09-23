@@ -10,7 +10,32 @@ describe('Contrats IA sans réseau', () => {
   });
   it.each(['max_tokens', 'refusal', null])('refuse une réponse incomplète %s', async reason => {
     const g = new IaGateway('test-only', {messages: {create: jest.fn().mockResolvedValue({stop_reason: reason, content: [{type: 'text', text: 'partial'}]})}} as any);
+    await expect(g.message(params)).rejects.toThrow(/incomplète|refusé/);
+  });
+  it('accepte tool_use seulement si demandé et comptabilise la consommation', async () => {
+    const r = { stop_reason: 'tool_use', content: [{type: 'tool_use', id: 't', name: 'x', input: {}}], usage: {input_tokens: 5, output_tokens: 2} };
+    const onUsage = jest.fn();
+    const g = new IaGateway('test-only', {messages: {create: jest.fn().mockResolvedValue(r)}} as any);
     await expect(g.message(params)).rejects.toThrow('incomplète');
+    await expect(g.message(params, undefined, {stopReasons: ['tool_use'], onUsage})).resolves.toEqual(r);
+    expect(onUsage).toHaveBeenCalledWith(r.usage, 'test-only');
+  });
+  it('réessaie une fois sans options refusées par un modèle ancien', async () => {
+    const ok = { stop_reason: 'end_turn', content: [{type: 'text', text: 'OK'}], usage: {input_tokens: 1, output_tokens: 1} };
+    const create = jest.fn()
+      .mockRejectedValueOnce({status: 400, error: {error: {message: 'effort is not supported on this model'}}})
+      .mockResolvedValueOnce(ok);
+    const g = new IaGateway('test-only', {messages: {create}} as any);
+    await expect(g.message({...params, output_config: {effort: 'low'}, thinking: {type: 'adaptive'}} as any)).resolves.toEqual(ok);
+    expect(create.mock.calls[1][0].output_config).toBeUndefined();
+    expect(create.mock.calls[1][0].thinking).toBeUndefined();
+  });
+  it('traduit les causes connues sans recopier le texte du fournisseur', async () => {
+    const g = new IaGateway('test-only', {messages: {create: jest.fn().mockRejectedValue({status: 400, error: {error: {message: 'Your credit balance is too low SECRET_DOC'}}})}} as any);
+    await expect(g.message(params)).rejects.toThrow('Crédit API insuffisant');
+    await expect(g.message(params)).rejects.not.toThrow('SECRET_DOC');
+    expect(IaGateway.describe({status: 404})).toContain('Modèle introuvable');
+    expect(IaGateway.describe({status: 401})).toContain('Clé IA refusée');
   });
   it.each([401,403,429,500,undefined])('masque données et secrets des erreurs %s', async status => {
     const g = new IaGateway('test-only', {messages: {create: jest.fn().mockRejectedValue({status, message: 'SECRET_PRIVATE_DOCUMENT'})}} as any);

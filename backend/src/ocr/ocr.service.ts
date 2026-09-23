@@ -4,6 +4,7 @@ import { preparerContenu } from './preparation-contenu';
 import { ExtractionIaMockService } from './extraction-ia-mock.service';
 import { ExtractionIaLiveService } from './extraction-ia-live.service';
 import { ResultatExtraction } from './resultat-extraction.interface';
+import { apiKey } from '../ia/ia-config';
 
 export { ResultatExtraction } from './resultat-extraction.interface';
 
@@ -29,13 +30,13 @@ export { ResultatExtraction } from './resultat-extraction.interface';
 export class OcrService {
   private readonly logger = new Logger(OcrService.name);
   private readonly modeEnvVar: string | undefined;
-  private readonly apiKey: string | undefined;
-  private serviceLive: ExtractionIaLiveService | null = null;
 
   constructor(private readonly config: ConfigService) {
     this.modeEnvVar = this.config.get<string>('WARAQA_IA_MODE');
-    this.apiKey = this.config.get<string>('ANTHROPIC_API_KEY');
   }
+
+  /** Lue à chaque appel : une clé enregistrée depuis les réglages s'applique sans redémarrage. */
+  private get apiKey(): string { return apiKey(); }
 
   private get modeActif(): 'mock' | 'live' {
     if (this.modeEnvVar === 'live') {
@@ -57,10 +58,7 @@ export class OcrService {
     const contenu = await preparerContenu(fichier, nomFichier);
 
     if (this.modeActif === 'live') {
-      if (!this.serviceLive) {
-        this.serviceLive = new ExtractionIaLiveService(this.apiKey!);
-      }
-      return this.serviceLive.extraire(contenu, nomFichier);
+      return new ExtractionIaLiveService(this.apiKey).extraire(contenu, nomFichier);
     }
 
     const mock = new ExtractionIaMockService();

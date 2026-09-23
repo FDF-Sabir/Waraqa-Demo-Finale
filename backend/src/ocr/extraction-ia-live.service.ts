@@ -1,4 +1,4 @@
-import { IaGateway } from "./ia-gateway";
+import { IaCallOptions, IaGateway } from "./ia-gateway";
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import Anthropic from '@anthropic-ai/sdk';
 import { ChampsBrutsTableau5, SousType } from '../common/types';
@@ -14,7 +14,37 @@ import {
 // Ne pas figer sur un identifiant daté : l'alias suit automatiquement
 // les mises à jour mineures du modèle décidées par Anthropic.
 const MODELE = 'claude-sonnet-5';
-const MAX_TOKENS_SORTIE = 4096;
+// Relevés bancaires multi-lignes : marge large, la facturation suit la sortie réelle.
+const MAX_TOKENS_SORTIE = 16000;
+
+/** Sortie structurée garantie par l'API (repli automatique sur le JSON libre si le modèle ne la gère pas). */
+const SCHEMA_SORTIE = {
+  type: 'object',
+  properties: {
+    sousType: { type: 'string', enum: Object.values(SousType) },
+    confiance: { type: 'number' },
+    lignes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          factNum: { type: 'string' }, designation: { type: 'string' }, mTtc: { type: 'number' },
+          iff: { type: 'string' }, libFrss: { type: 'string' }, iceFrs: { type: 'string' },
+          taux: { type: 'number' }, idPaie: { type: 'integer', enum: [1, 2, 3, 4, 5, 6, 7] },
+          datePaie: { type: 'string' }, dateFac: { type: 'string' },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['sousType', 'confiance', 'lignes'],
+  additionalProperties: false,
+};
+
+export interface ExtractionOptions extends IaCallOptions {
+  effort?: 'low' | 'medium' | 'high';
+  beforeCall?: () => Promise<void>;
+}
 
 /**
  * Champs que le modèle a le droit de produire — garde-fou explicite :
@@ -56,22 +86,25 @@ interface ReponseModeleBrute {
 export class ExtractionIaLiveService {
   private readonly client: IaGateway;
 
-  constructor(apiKey: string, private readonly model = process.env.WARAQA_IA_MODEL || MODELE) {
+  constructor(apiKey: string, private readonly model = process.env.WARAQA_IA_MODEL || MODELE, private readonly options: ExtractionOptions = {}) {
     this.client = new IaGateway(apiKey);
   }
 
-  async extraire(contenu: ContenuPrepare, _nomFichier: string): Promise<ResultatExtraction> {
+  async extraire(contenu: ContenuPrepare, _nomFichier: string, signal?: AbortSignal): Promise<ResultatExtraction> {
+    await this.options.beforeCall?.();
     const message = await this.client.message({
       model: this.model,
       max_tokens: MAX_TOKENS_SORTIE,
-      system: PROMPT_SYSTEME,
+      // Prompt système stable : mis en cache (lecture à 10 % du prix) d'une pièce à l'autre.
+      system: [{ type: 'text', text: PROMPT_SYSTEME, cache_control: { type: 'ephemeral' } }],
+      output_config: { effort: this.options.effort || 'medium', format: { type: 'json_schema', schema: SCHEMA_SORTIE } },
       messages: [
         {
           role: 'user',
           content: this.construireContenuMessage(contenu),
         },
       ],
-    });
+    } as any, signal, { onUsage: this.options.onUsage });
 
     const blocTexte = message.content.find((bloc) => bloc.type === 'text');
     if (!blocTexte || blocTexte.type !== 'text') {
@@ -118,7 +151,9 @@ export class ExtractionIaLiveService {
       ];
     }
 
-    return [{ type: 'text', text: construirePromptUtilisateurTexte(contenu.texte ?? '') }];
+    const texte = contenu.texte ?? '';
+    if (texte.length > 200_000) throw new InternalServerErrorException('Document texte trop long pour une extraction (200 000 caractères maximum) : scindez le fichier.');
+    return [{ type: 'text', text: construirePromptUtilisateurTexte(texte) }];
   }
 
   /**

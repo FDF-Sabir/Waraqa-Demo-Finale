@@ -37,6 +37,11 @@ export class UnifiedController {
   @UseGuards(JwtAuthGuard) @Post('email/test-local') emailTest(@UtilisateurCourant() u:any) {return this.integrations.localMail(u);}
   @UseGuards(JwtAuthGuard) @Get('email/outbox') emailOutbox(@UtilisateurCourant() u:any) {return this.integrations.outbox(u);}
   @UseGuards(JwtAuthGuard) @Get('diagnostics') diagnostics(@UtilisateurCourant() u:any) {return this.service.diagnostics(u);}
+  @UseGuards(JwtAuthGuard) @Get('ai') aiStatus(@UtilisateurCourant() u:any) {return this.service.aiStatus(u);}
+  @UseGuards(JwtAuthGuard) @Put('ai/key') aiKey(@Body() b:any,@UtilisateurCourant() u:any) {return this.service.setAiKey(b,u);}
+  @UseGuards(JwtAuthGuard) @Delete('ai/key') aiKeyDelete(@UtilisateurCourant() u:any) {return this.service.deleteAiKey(u);}
+  @UseGuards(JwtAuthGuard) @Post('ai/test') aiTest(@UtilisateurCourant() u:any) {return this.service.testAi(u);}
+  @UseGuards(JwtAuthGuard) @Get('conversations/:id/progress') chatProgress(@Param('id') id:string,@UtilisateurCourant() u:any) {return this.service.chatProgressFor(id,u);}
   @Get("status") status() {
     return this.service.status();
   }
