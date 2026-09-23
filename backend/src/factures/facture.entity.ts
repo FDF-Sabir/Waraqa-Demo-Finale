@@ -4,6 +4,7 @@ import {
   Entity,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
+  VersionColumn,
 } from 'typeorm';
 import { SousType, StatutFacture } from '../common/types';
 
@@ -99,6 +100,11 @@ export class FactureEntity {
   doublonDe?: number;
   @Column('int', { nullable: true })
   rapprocheeA?: number;
+  @VersionColumn() version!: number;
+  @Column({ nullable: true }) importKey?: string;
+  @Column('int', { nullable: true }) creditOf?: number;
+  @Column({ nullable: true }) accountingMonth?: string;
+  @Column({ nullable: true }) fiscalMonth?: string;
   @CreateDateColumn()
   creeLe!: Date;
 

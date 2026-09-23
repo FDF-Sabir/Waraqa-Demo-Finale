@@ -1,3 +1,5 @@
+import ImportPreview from "./ImportPreview";
+import DataMaintenance from "./DataMaintenance";
 import {
   useEffect,
   useMemo,
@@ -234,6 +236,7 @@ function Login({ onLogin }: { onLogin: (u: any) => void }) {
             autoComplete={setup ? "new-password" : "current-password"}
           />
         </label>
+        {!setup && <label>Code 2FA ou code de secours (si activé)<input name="otp" autoComplete="one-time-code" maxLength={64} /></label>}
         {error && (
           <p role="alert" className="u-error">
             {error}
@@ -293,7 +296,7 @@ export default function App() {
   };
   async function refresh() {
     const data = await Promise.all([
-      api<Invoice[]>("/factures"),
+      api<Invoice[]>("/factures?mois=" + month),
       api<RecordItem[]>("/workspace/documents"),
       api("/designations"),
       api("/notifications"),
@@ -322,7 +325,10 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (user) run(refresh);
-  }, [user]);
+    const changed = () => { if (user) run(refresh); };
+    window.addEventListener('workspace-changed', changed);
+    return () => window.removeEventListener('workspace-changed', changed);
+  }, [user, month]);
   useEffect(() => {
     localStorage.setItem("waraqa-month", month);
   }, [month]);
@@ -376,10 +382,10 @@ export default function App() {
     setEditing(undefined);
     await refresh();
   }
-  async function exportFile(format: string, scope = "reviewed") {
+  async function exportFile(format: string, scope = "reviewed", examples = false) {
     await download(
-      `/workspace/export?month=${month}&format=${format}&scope=${scope}`,
-      `Waraqa-${format}-${month}${scope === "all" ? "-BROUILLON" : ""}.${format === "xlsx" ? "xlsx" : "csv"}`,
+      `/workspace/export?month=${month}&format=${format}&scope=${scope}&examples=${examples}`,
+      `Waraqa-${format}-${month}${examples ? "-EXEMPLES" : ""}${scope === "all" ? "-BROUILLON" : ""}.${format === "xlsx" ? "xlsx" : format === "pdf" ? "pdf" : "csv"}`,
     );
     await refresh();
   }
@@ -750,6 +756,7 @@ export default function App() {
           )}
           {page === "releve" && (
             <Ledger
+              month={month}
               rows={filtered}
               query={query}
               add={() => add()}
@@ -930,6 +937,7 @@ export function InvoiceTable({
   );
 }
 function Ledger({
+  month,
   rows,
   query,
   add,
@@ -938,41 +946,32 @@ function Ledger({
   refresh,
   exportFile,
 }: {
+  month: string;
   rows: Invoice[];
   query: string;
   add: () => void;
   edit: (f: Invoice) => void;
   run: Run;
   refresh: () => Promise<void>;
-  exportFile: (f: string, s?: string) => Promise<void>;
+  exportFile: (f: string, s?: string, examples?: boolean) => Promise<void>;
 }) {
   const [filter, setFilter] = useState("all"),
     [selected, setSelected] = useState<number[]>([]),
     [page, setPage] = useState(1),
     [archive, setArchive] = useState(false),
     [sort, setSort] = useState("recent");
-  const filtered = rows
-    .filter(
-      (f) =>
-        filter === "all" ||
-        (filter === "reviewed" && f.revueHumaine) ||
-        (filter === "pending" && !f.revueHumaine) ||
-        (filter === "anomaly" && (f.statut !== "validee" || f.doublonDe)) ||
-        (filter === "bank" && bank(f)),
-    )
-    .sort((a, b) =>
-      sort === "supplier"
-        ? (a.libFrss || "").localeCompare(b.libFrss || "")
-        : sort === "amount"
-          ? b.mTtc - a.mTtc
-          : b.id - a.id,
-    );
-  const pages = Math.max(1, Math.ceil(filtered.length / 15));
-  useEffect(() => {
-    setPage(1);
-    setSelected([]);
-  }, [filter, query, rows]);
-  const ids = selected.filter((id) => rows.some((r) => r.id === id));
+  const ledgerRevision = rows.map(f=>`${f.id}:${f.version}`).join(",");
+  const [remote, setRemote] = useState<{rows:Invoice[];total:number}>({rows:[],total:0});
+  const [loading,setLoading]=useState(false);
+  useEffect(()=>{setPage(1);setSelected([]);},[filter,query,month,sort]);
+  useEffect(()=>{
+    let current=true;setLoading(true);
+    const timer=setTimeout(()=>{run(async()=>{const result=await api('/workspace/invoices?'+new URLSearchParams({month,search:query,filter,page:String(page),size:'15',sort}));if(current)setRemote(result);}).finally(()=>{if(current)setLoading(false);});},120);
+    return ()=>{current=false;clearTimeout(timer);};
+  },[filter,query,month,page,sort,ledgerRevision]);
+  const filtered=remote.rows;
+  const pages=Math.max(1,Math.ceil(remote.total/15));
+  const ids = selected.filter((id) => filtered.some((r) => r.id === id));
   return (
     <>
       <PageHead
@@ -985,6 +984,10 @@ function Ledger({
         >
           <Icon name="download" size={17} />
           Excel des lignes revues
+        </button>
+        <button className="secondary" onClick={() => run(() => exportFile('pdf'), 'Relevé PDF téléchargé')}>
+          <Icon name="download" size={17} />
+          PDF des lignes revues
         </button>
         <button className="primary" onClick={add}>
           <Icon name="plus" size={17} />
@@ -1031,7 +1034,7 @@ function Ledger({
                 setSelected(e.target.checked ? filtered.map((f) => f.id) : [])
               }
             />{" "}
-            Tout sélectionner ({filtered.length})
+            Sélectionner la page ({filtered.length})
           </label>
           <div className="u-actions">
             <button
@@ -1069,10 +1072,7 @@ function Ledger({
           </div>
         </div>
         <InvoiceTable
-          rows={filtered.slice(
-            (Math.min(page, pages) - 1) * 15,
-            Math.min(page, pages) * 15,
-          )}
+          rows={filtered}
           edit={edit}
           selected={ids}
           toggle={(id) =>
@@ -1082,7 +1082,7 @@ function Ledger({
           }
         />
         <div className="u-pagination">
-          <span>{filtered.length} ligne(s)</span>
+          <span>{loading ? "Chargement…" : `${remote.total} ligne(s)`}</span>
           <button
             className="secondary small"
             disabled={page <= 1}
@@ -1162,7 +1162,7 @@ function InvoiceForm({
             "idPaie",
             "datePaie",
             "dateFac",
-            "sousType",
+            "sousType", "creditOf", "accountingMonth", "fiscalMonth",
           ].map((k) => [k, (invoice as any)[k] ?? ""]),
         )
       : {
@@ -1177,7 +1177,10 @@ function InvoiceForm({
   async function submit(e: FormEvent) {
     e.preventDefault();
     setSaving(true);
-    const data = { ...form, mTtc: Number(form.mTtc), taux: Number(form.taux) };
+    const data = { ...form, ...(invoice ? { expectedVersion: invoice.version } : {}), mTtc: Number(form.mTtc), taux: Number(form.taux) };
+    if (form.creditOf) data.creditOf = Number(form.creditOf); else delete data.creditOf;
+    if (!data.accountingMonth) delete data.accountingMonth;
+    if (!data.fiscalMonth) delete data.fiscalMonth;
     if (form.idPaie) data.idPaie = Number(form.idPaie);
     else delete data.idPaie;
     await run(() => onSave(data), "Ligne enregistrée");
@@ -1203,6 +1206,9 @@ function InvoiceForm({
               ))}
             </select>
           </label>
+          <label>Facture source de l’avoir (ID)<input type="number" min="1" value={form.creditOf || ''} disabled={Boolean(invoice)} onChange={e => set('creditOf',e.target.value)} /><small>Avoir : montant négatif, source obligatoire.</small></label>
+          <label>Période comptable (repère)<input type="month" value={form.accountingMonth || ''} onChange={e=>set('accountingMonth',e.target.value)} /></label>
+          <label>Période fiscale proposée — à vérifier<input type="month" value={form.fiscalMonth || ''} onChange={e=>set('fiscalMonth',e.target.value)} /><small>Ne change pas le rattachement historique par date de paiement ou facture.</small></label>
           <label>
             N° de facture
             <input
@@ -1249,7 +1255,7 @@ function InvoiceForm({
             <input
               type="number"
               required
-              min="0"
+              min={form.creditOf ? undefined : "0"}
               step="0.01"
               value={form.mTtc}
               onChange={(e) => set("mTtc", e.target.value)}
@@ -1366,7 +1372,7 @@ function Imports({
       const data = new FormData();
       data.append("file", file);
       try {
-        const r = await api("/workspace/documents", "POST", data);
+        const r = await api("/workspace/documents?preview=true", "POST", data);
         setProgress((p) => [
           ...p,
           { name: file.name, status: r.data.status, errors: r.data.errors },
@@ -1529,7 +1535,10 @@ function Imports({
                         >
                           Saisir une ligne
                         </button>
-                        {!d.data.invoiceIds.length && (
+                        {['partiel','interrompu','annule'].includes(d.data.status) && <button className="secondary small" onClick={() => run(async () => {await api(`/workspace/documents/${d.id}/commit`, 'POST');await refresh();}, 'Reprise terminée, consultez les rejets')}>Reprendre sans doublons</button>}
+                        {d.data.status === 'en_cours' && <button className="secondary small" onClick={() => run(() => api(`/workspace/documents/${d.id}/cancel`, 'POST'), 'Annulation demandée après la ligne en cours')}>Annuler</button>}
+                        {d.data.status === 'apercu' && <button className="primary small" onClick={() => setDetails(d)}>Vérifier l’aperçu</button>}
+                        {!d.data.invoiceIds.length && d.data.status !== 'apercu' && (
                           <button
                             className="secondary small"
                             disabled={mode !== "live"}
@@ -1566,6 +1575,7 @@ function Imports({
           <p>
             Lignes créées : {details.data.invoiceIds.join(", ") || "Aucune"}
           </p>
+          {details.data.status === 'apercu' && <ImportPreview id={details.id} run={run} done={async () => {setDetails(null);await refresh();}} />}
           {details.data.errors.map((e: string, i: number) => (
             <p className="u-info" key={i}>
               {e}
@@ -1774,9 +1784,13 @@ function Bank({
 }) {
   const [items, setItems] = useState<any[]>([]),
     [choice, setChoice] = useState<Record<number, string>>({}),
+    [amounts, setAmounts] = useState<Record<number, string>>({}),
+    [allocations, setAllocations] = useState<RecordItem[]>([]),
+    [cancel, setCancel] = useState<RecordItem | null>(null),
     [orphan, setOrphan] = useState<any>(null);
   async function load() {
     setItems(await api("/workspace/reconciliation?month=" + month));
+    setAllocations(await api("/workspace/allocations"));
   }
   useEffect(() => {
     run(load);
@@ -1785,7 +1799,7 @@ function Bank({
     <>
       <PageHead
         title="Relier paiements et factures."
-        subtitle="Suggestions par montant identique. Confirmez le fournisseur et la référence avant chaque rapprochement."
+        subtitle="Affectez chaque montant aux factures concernées. Paiements partiels et reliquats restent visibles ; aucune charge bancaire ajoutée."
       />
       <div className="u-info">
         Les mouvements bancaires ne sont pas additionnés aux achats ni exportés
@@ -1800,7 +1814,7 @@ function Bank({
           <section className="panel u-pad" key={item.payment.id}>
             <div className="u-row">
               <h2>
-                Paiement #{item.payment.id} · {money(item.payment.mTtc)} MAD
+                Paiement #{item.payment.id} · Disponible {money(item.remaining)} MAD
               </h2>
               <Status tone="amber">À confirmer</Status>
             </div>
@@ -1818,10 +1832,11 @@ function Bank({
               <option value="">Choisir une facture candidate</option>
               {item.candidates.map((f: any) => (
                 <option key={f.id} value={f.id}>
-                  #{f.id} · {f.factNum} · {f.libFrss} · {f.dateFac}
+                  #{f.id} · {f.factNum} · {f.libFrss} · Reste {money(f.remaining)} MAD
                 </option>
               ))}
             </select>
+            <label>Montant affecté (MAD)<input type="number" min="0.01" step="0.01" max={item.remaining} value={amounts[item.payment.id] ?? item.remaining} onChange={e=>setAmounts({...amounts,[item.payment.id]:e.target.value})} /></label>
             <button
               className="primary"
               disabled={!choice[item.payment.id]}
@@ -1830,6 +1845,7 @@ function Bank({
                   await api("/workspace/reconciliation", "POST", {
                     paymentId: item.payment.id,
                     invoiceId: Number(choice[item.payment.id]),
+                    amount: Number(amounts[item.payment.id] ?? item.remaining),
                   });
                   await refresh();
                   await load();
@@ -1889,17 +1905,10 @@ function Bank({
         </Modal>
       )}
       <section className="panel u-pad">
-        <h2>Liens enregistrés</h2>
-        {invoices
-          .filter(
-            (f) =>
-              bank(f) && f.rapprocheeA && (f.datePaie || "").startsWith(month),
-          )
-          .map((f) => (
-            <p key={f.id}>
-              Paiement #{f.id} → Facture #{f.rapprocheeA} · {money(f.mTtc)} MAD
-            </p>
-          ))}
+        <h2>Affectations enregistrées</h2>
+        <p>Une affectation partielle bloque l’export revu de la facture. Le traitement fiscal du paiement partiel reste à vérifier ; le brouillon conserve les montants complets.</p>
+        {allocations.map(a=><div className="u-row" key={a.id}><span>Paiement #{a.data.paymentId} → Facture #{a.data.invoiceId} · {money(a.data.cents/100)} MAD {a.data.cancelled ? '· Annulée : '+a.data.reason : ''}</span>{!a.data.cancelled && <button className="secondary small" onClick={()=>setCancel(a)}>Annuler l’affectation</button>}</div>)}
+        {cancel && <Modal title="Annuler l’affectation" close={()=>setCancel(null)}><form onSubmit={e=>{e.preventDefault();const reason=new FormData(e.currentTarget).get('reason');run(async()=>{await api(`/workspace/allocations/${cancel.id}/cancel`,'POST',{reason});setCancel(null);await refresh();await load();},'Affectation annulée et journalisée');}}><label>Motif<input name="reason" minLength={5} maxLength={500} required /></label><button className="primary">Confirmer l’annulation</button></form></Modal>}
       </section>
     </>
   );
@@ -1911,9 +1920,10 @@ function Exports({
 }: {
   month: string;
   run: Run;
-  exportFile: (f: string, s?: string) => Promise<void>;
+  exportFile: (f: string, s?: string, examples?: boolean) => Promise<void>;
 }) {
   const [scope, setScope] = useState("reviewed"),
+    [examples, setExamples] = useState(false),
     [snapshots, setSnapshots] = useState<RecordItem[]>([]),
     [active, setActive] = useState<RecordItem | null>(null);
   async function load() {
@@ -1930,6 +1940,7 @@ function Exports({
       />
       <section className="panel u-pad">
         <h2>Exporter la période {month}</h2>
+        <label className="u-checkbox"><input type="checkbox" checked={examples} onChange={e => setExamples(e.target.checked)} />Inclure les exemples fictifs — fichier marqué EXEMPLES</label>
         <label>
           Sélection
           <select value={scope} onChange={(e) => setScope(e.target.value)}>
@@ -1941,8 +1952,13 @@ function Exports({
             </option>
           </select>
         </label>
-        <div className="u-cards">
+        <div className="u-cards u-export-cards">
           {[
+            [
+              "pdf",
+              "Relevé PDF illustré",
+              "Les mêmes lignes que le relevé Excel, avec synthèse, graphiques, tableaux et contrôles en couleurs.",
+            ],
             [
               "xlsx",
               "Relevé Excel",
@@ -1966,10 +1982,10 @@ function Exports({
               <button
                 className="primary"
                 onClick={() =>
-                  run(() => exportFile(f, scope), "Export téléchargé")
+                  run(() => exportFile(f, scope, examples), "Export téléchargé")
                 }
               >
-                Télécharger
+                {f === 'pdf' ? 'Télécharger le PDF' : f === 'xlsx' ? 'Télécharger Excel' : 'Télécharger'}
               </button>
             </div>
           ))}
@@ -1986,7 +2002,7 @@ function Exports({
             <h2>Snapshots de travail</h2>
             <p>
               Une copie immuable des lignes et des totaux au moment de sa
-              création.
+              création, téléchargeable en PDF.
             </p>
           </div>
           <button
@@ -2005,7 +2021,7 @@ function Exports({
           <Empty text="Aucun snapshot pour le moment." />
         ) : (
           snapshots.map((s) => (
-            <div className="u-task" key={s.id}>
+            <div className="u-task u-snapshot" key={s.id}>
               <span>
                 <b>{s.data.month}</b> ·{" "}
                 {new Date(s.data.createdAt).toLocaleString("fr-FR")} ·{" "}
@@ -2014,10 +2030,17 @@ function Exports({
               <button className="secondary small" onClick={() => setActive(s)}>
                 Consulter
               </button>
+              <button className="secondary small" onClick={() => run(
+                () => download(`/workspace/snapshots/${encodeURIComponent(s.id)}/pdf`, `Waraqa-snapshot-${s.data.month}.pdf`),
+                'Snapshot PDF téléchargé',
+              )}>
+                Télécharger le PDF
+              </button>
             </div>
           ))
         )}
       </section>
+      <DataMaintenance run={run} />
       {active && (
         <Modal
           title={"Snapshot " + active.data.month}

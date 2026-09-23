@@ -1,0 +1,43 @@
+{
+  "date": "2026-09-23T10:02:43.673Z",
+  "synthetic": true,
+  "thresholds": {
+    "import10000Ms": 180000,
+    "readP95Ms": 1500,
+    "exportMs": 10000,
+    "rssMb": 1500
+  },
+  "stages": [
+    {
+      "count": 100,
+      "total": 100,
+      "importMs": 1421,
+      "readMedianMs": 33,
+      "readP95Ms": 37,
+      "exportMs": 67,
+      "exportBytes": 62022,
+      "rssMb": 165
+    },
+    {
+      "count": 1000,
+      "total": 1100,
+      "importMs": 11929,
+      "readMedianMs": 33,
+      "readP95Ms": 33,
+      "exportMs": 184,
+      "exportBytes": 510944,
+      "rssMb": 194
+    },
+    {
+      "count": 10000,
+      "total": 11100,
+      "importMs": 156354,
+      "readMedianMs": 206,
+      "readP95Ms": 274,
+      "exportMs": 1559,
+      "exportBytes": 5161266,
+      "rssMb": 298
+    }
+  ],
+  "status": "passed"
+}

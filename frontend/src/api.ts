@@ -56,6 +56,11 @@ export async function download(path: string, name: string) {
 }
 export type Invoice = {
   id: number;
+  version: number;
+  creditOf?: number;
+  accountingMonth?: string;
+  fiscalMonth?: string;
+  archivee?: boolean;
   or?: string;
   factNum?: string;
   designation?: string;

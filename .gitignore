@@ -5,3 +5,9 @@ backend/data/
 **/*.sqlite-*
 **/coverage/
 **/*.tsbuildinfo
+
+# Secrets et captures de clés : ne jamais versionner
+*API*KEY*
+*api*key*
+*.key
+qa-failure.png

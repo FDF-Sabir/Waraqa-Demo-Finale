@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { preparerContenu } from './preparation-contenu';
 import { ExtractionIaMockService } from './extraction-ia-mock.service';
@@ -51,6 +51,9 @@ export class OcrService {
   }
 
   async extraire(fichier: Buffer, nomFichier: string): Promise<ResultatExtraction> {
+    if (process.env.NODE_ENV !== 'test' && (this.modeEnvVar !== 'live' || !this.apiKey)) {
+      throw new ServiceUnavailableException('OCR connecté indisponible. Importez via Pièces pour conserver le document et saisir les lignes manuellement. Aucune extraction simulée.');
+    }
     const contenu = await preparerContenu(fichier, nomFichier);
 
     if (this.modeActif === 'live') {

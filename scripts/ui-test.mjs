@@ -1,7 +1,7 @@
-import { chromium } from "playwright";
+import { chromium, firefox, webkit } from "playwright";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
@@ -36,12 +36,12 @@ try {
       }
     });
   });
-  browser = await chromium.launch({
+  browser = await ({chromium,firefox,webkit}[process.env.WARAQA_BROWSER || "chromium"]).launch({
     headless: true,
     ...(process.env.WARAQA_BROWSER_PATH
       ? { executablePath: process.env.WARAQA_BROWSER_PATH }
       : {}),
-    args: ["--no-sandbox", "--disable-dev-shm-usage"],
+    args: (!process.env.WARAQA_BROWSER || process.env.WARAQA_BROWSER === 'chromium') ? ["--no-sandbox", "--disable-dev-shm-usage"] : [],
   });
   const context = await browser.newContext({
     viewport: { width: 1440, height: 1000 },
@@ -122,6 +122,26 @@ try {
   const dl = await downloadPromise;
   assert(dl.suggestedFilename().endsWith(".xlsx"));
   results.push("Manual invoice, human review and Excel download");
+  const pdfDownload = page.waitForEvent('download');
+  await page.getByRole('button', {name:'PDF des lignes revues',exact:true}).click();
+  const pdf = await pdfDownload;
+  assert(pdf.suggestedFilename().endsWith('.pdf'));
+  assert.equal((await readFile(await pdf.path())).subarray(0,5).toString(), '%PDF-');
+  results.push('Reviewed ledger PDF download');
+  await page.locator('.sidebar').getByRole('button',{name:'Exports & snapshots',exact:true}).click();
+  await page.getByRole('button',{name:'Créer un snapshot',exact:true}).click();
+  const snapshotDownload = page.waitForEvent('download');
+  await page.locator('.u-task').getByRole('button',{name:'Télécharger le PDF',exact:true}).first().click();
+  const snapshotPdf = await snapshotDownload;
+  assert(snapshotPdf.suggestedFilename().startsWith('Waraqa-snapshot-'));
+  assert.equal((await readFile(await snapshotPdf.path())).subarray(0,5).toString(), '%PDF-');
+  const archiveDownload = page.waitForEvent('download');
+  await page.getByRole('button',{name:'Sauvegarder les archives en PDF',exact:true}).click();
+  const archivePdf = await archiveDownload;
+  assert.equal(archivePdf.suggestedFilename(),'Waraqa-archives.pdf');
+  assert.equal((await readFile(await archivePdf.path())).subarray(0,5).toString(), '%PDF-');
+  await page.screenshot({path:root+'/docs/apercu-exports.png',fullPage:true});
+  results.push('Snapshot and archive PDF downloads');
   await page
     .getByRole("button", { name: "Importer des pièces", exact: true })
     .click();
@@ -138,9 +158,12 @@ try {
     .getByRole("button", { name: "Importer 1 fichier(s)", exact: true })
     .click();
   await page
-    .getByText("ui-import.csv · a_verifier", { exact: false })
+    .getByText("ui-import.csv · apercu", { exact: false })
     .waitFor();
-  results.push("Browser file upload to persistent backend");
+  await page.getByRole('button',{name:'Vérifier l’aperçu'}).click();
+  await page.getByRole('button',{name:'Confirmer l’import des lignes acceptées'}).click();
+  await page.getByRole('dialog').waitFor({state:'hidden'});
+  results.push("Browser file upload, preview and explicit import confirmation");
   for (const name of [
     "Rapprochement",
     "Désignations",
@@ -213,10 +236,31 @@ try {
   results.push(
     "Mobile layout without horizontal overflow and working navigation",
   );
+  const matrix=[];
+  for(const width of [320,375,390,768,1024,1440,1920]) {
+    for(const [orientation,height] of [['portrait',1000],['paysage',480]]) {
+      await page.setViewportSize({width,height});
+      for(const route of ['chat','dashboard','releve','import','banque','designations','templates','exports','journal','reglages']) {
+        await page.evaluate(route=>{location.hash='#/'+route;},route);
+        await page.waitForTimeout(80);
+        const d=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));
+        assert(d.scroll<=d.width+1,`${route} ${width} ${orientation}: ${JSON.stringify(d)}`);
+      }
+      matrix.push({width,height,orientation,pages:10,status:'passed',kind:'émulation viewport'});
+    }
+  }
+  await page.setViewportSize({width:1440,height:1000});
+  await page.evaluate(()=>{document.body.style.zoom='2';location.hash='#/chat';});
+  await page.waitForTimeout(100);
+  const zoom=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));
+  assert(zoom.scroll<=zoom.width+1,'zoom 200% CSS '+JSON.stringify(zoom));
+  await page.evaluate(()=>{document.body.style.zoom='';});
+  results.push('14 viewport/orientation combinations × 10 pages; CSS zoom 200%');
+  await writeFile(root+'/docs/appareils-'+(process.env.WARAQA_BROWSER || 'chromium')+'.json',JSON.stringify({date:new Date().toISOString(),browser:process.env.WARAQA_BROWSER || 'chromium',version:browser.version(),matrix,zoom:'CSS 200%, pas un appareil réel'},null,2));
   assert.deepEqual(errors, []);
   results.push("No browser console errors");
   await writeFile(
-    root + "/docs/tests-interface.json",
+    root + "/docs/tests-interface-"+(process.env.WARAQA_BROWSER || "chromium")+".json",
     JSON.stringify({ passed: results.length, checks: results }, null, 2),
   );
   console.log(JSON.stringify(results, null, 2));

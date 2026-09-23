@@ -1,0 +1,14 @@
+import { useEffect,useState } from 'react';
+import { api,type RecordItem } from './api';
+import {type Run} from './App';
+export default function Integrations({run}:{run:Run}){
+ const [status,setStatus]=useState<any>(),[outbox,setOutbox]=useState<RecordItem[]>([]),[docs,setDocs]=useState<RecordItem[]>([]),[documentId,setDocumentId]=useState(''),[busy,setBusy]=useState(false);
+ async function load(){setStatus(await api('/workspace/integrations'));setOutbox(await api('/workspace/email/outbox'));setDocs(await api('/workspace/documents'));}
+ useEffect(()=>{run(load);},[]);
+ async function action(fn:()=>Promise<void>){if(busy)return;setBusy(true);await run(fn);setBusy(false);}
+ return <><div className="u-card"><h3>Google Drive</h3><p>{status?.drive.authorized?'Autorisation enregistrée. L’accès effectif sera vérifié lors du transfert.':status?.drive.configured?'OAuth configuré, compte non autorisé.':'Non configuré. Renseignez les trois variables GOOGLE_* dans backend/.env.'}</p><p>Enregistrez ci-dessous l’identifiant d’un dossier accessible à cette application. Le droit drive.file limite l’accès aux fichiers autorisés. Aucun transfert automatique.</p>
+ <button className="secondary" disabled={busy || !status?.drive.configured} onClick={()=>action(async()=>{const r=await api('/workspace/drive/start','POST');location.assign(r.url);})}>Autoriser Google Drive</button>
+ {status?.drive.authorized && <><button className="secondary" disabled={busy} onClick={()=>action(async()=>{await api('/workspace/drive/disconnect','POST');await load();})}>Révoquer et déconnecter Drive</button><label>Original à transférer<select value={documentId} onChange={e=>setDocumentId(e.target.value)}><option value="">Choisir un document</option>{docs.map(d=><option key={d.id} value={d.id}>{d.data.name}</option>)}</select></label><button className="primary" disabled={busy || !documentId} onClick={()=>action(async()=>{const r=await api('/workspace/drive/upload','POST',{documentId});await load();if(!r.id)throw Error('Transfert non confirmé.');})}>Envoyer cet original vers le dossier Drive autorisé</button></>}
+ </div><div className="u-card"><h3>Email — boîte de test locale</h3><p>Aucun destinataire externe n’est contacté. Ces messages permettent de vérifier le parcours local.</p><button className="secondary" disabled={busy} onClick={()=>action(async()=>{await api('/workspace/email/test-local','POST');await load();})}>Créer un message de test local</button>{outbox.map(m=><p key={m.id}>{m.data.subject} · {m.data.state} · {m.data.text}</p>)}</div>
+ <div className="u-info">Push externe : non configuré (service Web Push/VAPID requis). Capacités de ce navigateur : notifications {'Notification' in window?'disponibles':'indisponibles'}, abonnements Push {'PushManager' in window?'disponibles':'indisponibles'}. La cloche interne reste locale.</div></>;
+}

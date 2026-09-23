@@ -1,3 +1,4 @@
+import { IaGateway } from "./ia-gateway";
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import Anthropic from '@anthropic-ai/sdk';
 import { ChampsBrutsTableau5, SousType } from '../common/types';
@@ -53,14 +54,14 @@ interface ReponseModeleBrute {
  */
 @Injectable()
 export class ExtractionIaLiveService {
-  private readonly client: Anthropic;
+  private readonly client: IaGateway;
 
   constructor(apiKey: string, private readonly model = process.env.WARAQA_IA_MODEL || MODELE) {
-    this.client = new Anthropic({ apiKey, timeout: 60000, maxRetries: 1 });
+    this.client = new IaGateway(apiKey);
   }
 
   async extraire(contenu: ContenuPrepare, _nomFichier: string): Promise<ResultatExtraction> {
-    const message = await this.client.messages.create({
+    const message = await this.client.message({
       model: this.model,
       max_tokens: MAX_TOKENS_SORTIE,
       system: PROMPT_SYSTEME,
@@ -79,7 +80,7 @@ export class ExtractionIaLiveService {
       );
     }
 
-    return this.parserReponse(blocTexte.text);
+    return { ...this.parserReponse(blocTexte.text), usage: message.usage } as ResultatExtraction;
   }
 
   private construireContenuMessage(contenu: ContenuPrepare): Anthropic.MessageParam['content'] {
@@ -131,10 +132,11 @@ export class ExtractionIaLiveService {
       brute = JSON.parse(jsonNettoye);
     } catch (erreur) {
       throw new InternalServerErrorException(
-        `Réponse IA non parsable en JSON : ${(erreur as Error).message}`,
+        "Réponse IA non parsable en JSON.",
       );
     }
 
+    if (!brute || typeof brute !== "object") throw new InternalServerErrorException("Réponse IA structurée invalide.");
     if (!Object.values(SousType).includes(brute.sousType as SousType)) {
       throw new InternalServerErrorException(
         `Sous-type IA invalide : "${brute.sousType}" n'est pas un sous-type reconnu.`,
@@ -152,10 +154,15 @@ export class ExtractionIaLiveService {
   }
 
   private filtrerChamps(ligne: Record<string, unknown>): ChampsBrutsTableau5 {
+    if (!ligne || typeof ligne !== "object" || Array.isArray(ligne)) throw new InternalServerErrorException("Ligne IA invalide.");
     const resultat: ChampsBrutsTableau5 = {};
     for (const champ of CHAMPS_AUTORISES) {
       if (ligne[champ] !== undefined && ligne[champ] !== null && ligne[champ] !== '') {
-        (resultat as Record<string, unknown>)[champ] = ligne[champ];
+        const value = ligne[champ];
+        const numeric = ['mTtc', 'taux', 'idPaie'].includes(champ);
+        if (numeric ? typeof value !== 'number' || !Number.isFinite(value) : typeof value !== 'string' || value.length > 1000)
+          throw new InternalServerErrorException('Type de champ IA invalide : ' + champ);
+        (resultat as Record<string, unknown>)[champ] = value;
       }
     }
     return resultat;

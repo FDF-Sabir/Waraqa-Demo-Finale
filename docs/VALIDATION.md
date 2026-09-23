@@ -1,40 +1,47 @@
-# Validation du livrable
+# Validation locale — 23 septembre 2026
 
-## Résultats observés
+Cette validation remplace les résultats antérieurs. Environnement : Linux, Node.js 22.23.1. Les données de test et les documents d’exemple sont fictifs ; les tests utilisent des bases temporaires.
 
-- Compilation NestJS : réussie.
-- Contrôle TypeScript strict du frontend : réussi.
-- Build Vite : réussi ; assets compilés inclus dans `backend/public/`.
-- **50 tests unitaires** hérités : réussis.
-- **53 tests API/e2e** : réussis, dont 3 tests du planificateur de snapshots ajouté.
-- **17 parcours d’intégration** sur base temporaire et serveur de production : réussis.
-- Lanceur livré : démarrage réussi sur une base neuve, création du secret de session et écran de première configuration vérifiés.
-- **8 groupes de contrôles navigateur** : réussis, bureau 1440 × 1000 et mobile 390 × 844, sans erreur JavaScript.
+## Résultats
 
-Les tests ont été effectués sous Linux avec Node.js 24.19.0 et Chromium headless. Le lancement Windows est fourni, mais n’a pas été exécuté sur une machine Windows.
+- Compilation NestJS, contrôle TypeScript frontend et build Vite : réussis.
+- 78 tests unitaires : réussis.
+- 70 tests API/e2e : réussis.
+- 17 parcours intégrés sur serveur de production : réussis (`docs/tests-integration.json`).
+- Firefox : 11 groupes de contrôles réussis, incluant Excel, relevé PDF, PDF de snapshot et PDF d’archive. La matrice couvre 14 combinaisons taille/orientation × 10 pages et le zoom CSS 200 %. Voir `tests-interface-firefox.json` et `appareils-firefox.json`.
+- Volume : import par lots de 100, 1 000 et 10 000 lignes, soit 11 100 lignes cumulées. Au dernier palier : import 156,354 s, lectures p95 274 ms, export Excel 1,559 s, mémoire serveur 298 Mo. Seuils du test respectés (`tests-charge.json`).
+- Volume PDF : 1 000 lignes, 278 pages, génération 1,956 s, 596 670 octets ; les 1 000 références ont été retrouvées à la lecture (`tests-volume-pdf.json`). Ce contrôle est distinct du test de volume Excel.
 
-## Points contrôlés
+## PDF et cohérence des données
 
-Authentification et fermeture des inscriptions après le premier compte ; clé jamais exposée et activation live refusée sans clé ; données d’exemple marquées et chargement idempotent ; revue des lignes incomplètes refusée ; revue annulée à modification ; équilibre des centimes ; rattachement par mois de paiement ; champs calculés non acceptés en entrée ; doublons ; import CSV réel et conservation des zéros de l’ICE ; erreurs partielles de lot ; déduplication des documents ; scan sans fausse extraction ; pièce liée à saisie manuelle ; rapprochement ; exclusion bancaire des totaux d’achats ; exports Excel et Sage ; immutabilité des snapshots ; modèles de prompts ; conversations et pièces jointes ; autorisations et confidentialité des conversations ; suppression de compte ; persistance après redémarrage ; changement de mot de passe révoquant les sessions.
+Les PDF d’archive, de snapshot et de relevé partagent une présentation A4 paysage vert/or : synthèse, graphiques vectoriels, tableaux avec en-têtes répétés, numéros de page et polices embarquées. Le relevé financier et le tableau de contrôle conservent les 13 champs Tableau5 ainsi que les identifiants, statuts et liens documentaires. Les textes longs peuvent se poursuivre sur plusieurs pages sans troncature.
 
-Le planificateur est testé avec des dates contrôlées : aucune exécution quand il est désactivé, respect de l’échéance, absence de répétition à échéance identique, totaux hors double comptage bancaire.
+La génération utilise les montants enregistrés par le serveur. Les totaux et graphiques n’additionnent pas les paiements bancaires aux achats ; les commissions restent incluses et les avoirs gardent leur signe. Les quatre fournisseurs principaux sont affichés par montant net absolu ; les autres sont regroupés, sans perte de montant. Le graphique de revue décrit l’ensemble des lignes du document, mouvements bancaires compris.
 
-Le navigateur vérifie la création du compte, les exemples, le dashboard, l’insertion de modèle, l’envoi et le rechargement du chat, une saisie manuelle, une validation humaine, le téléchargement Excel, un upload CSV, les dix pages, les onglets de réglages, leur persistance et la navigation mobile sans débordement horizontal de la page.
+Les tests vérifient l’égalité des sélections PDF/Excel pour les options revue/brouillon et avec/sans exemples, l’accès authentifié, les archives vides, les accents, les zéros initiaux, les montants négatifs, les textes longs, les références de toutes les lignes, et l’immuabilité des snapshots après modification des factures. Les nouveaux snapshots figent aussi l’identité de l’entreprise. Les anciens restent lisibles sans inventer leur ancienne identité.
+
+Les exemples visuellement inspectés sont dans `exemples-exports/` : relevé, archive, snapshot et aperçu PNG. Régénération : `node scripts/pdf-preview.cjs` après compilation. Les originaux importés ne sont pas restylés ni convertis.
+
+## Parcours applicatifs
+
+Authentification et fermeture des inscriptions ; revue humaine et calculs serveur ; doublons ; dates et périodes ; import réel CSV/Excel, aperçu et reprise ; avoirs ; paiements partiels ; rapprochement ; exports Excel/Sage ; snapshots ; conversations ; droits administrateur ; TOTP et codes de secours ; sauvegarde/restauration sur copie ; persistance après redémarrage et révocation des sessions.
+
+Le contrôle navigateur couvre les dix pages, les réglages, la discussion locale, les fichiers, la saisie et revue, les téléchargements et les petits écrans. Deux débordements Firefox à 320 px ont été corrigés : sélecteur de période et actions du snapshot.
 
 ## Reproduction
 
-Après `npm run setup` :
-
 ```sh
+npm run build
 npm test
+npm run test:ui
+WARAQA_BROWSER=firefox npm run test:ui
+WARAQA_BROWSER=webkit npm run test:ui
+node scripts/load-test.cjs
+node scripts/pdf-preview.cjs
 ```
 
-Les tests utilisent des bases temporaires et ne modifient pas votre dossier comptable. Les résultats détaillés sont dans `tests-integration.json` et `tests-interface.json`.
+Les navigateurs Playwright doivent être installés. `WARAQA_BROWSER_PATH` permet de préciser leur exécutable local.
 
-Pour rejouer les tests navigateur, installer Playwright dans le dossier racine, installer son Chromium, puis exécuter `npm run test:ui`. Ce test produit les captures `docs/apercu-*.png` et utilise une base temporaire. Le test UI est optionnel et n’est pas nécessaire au lancement de la démo.
+## Limites de cette validation
 
-## Non validé avec des services réels
-
-Aucun appel Anthropic payant : pas de clé fournie, conformément à la demande. La qualité OCR, les droits du modèle, les quotas et la latence devront être vérifiés lors de l’activation. Aucune certification DGI et aucun import dans un vrai dossier Sage 100. Aucun Google Drive, SMTP, push ou 2FA connecté.
-
-Les captures du dossier `docs/` montrent uniquement des utilisateurs et pièces fictifs créés pour les tests. Elles ne constituent pas des données comptables réelles.
+Les essais navigateur sont automatisés sur Linux et les petits écrans sont émulés. Ils ne remplacent pas un essai sur téléphone réel, Windows ou macOS. Aucun appel réel Anthropic/OCR, aucune connexion réelle Google Drive, aucun envoi externe et aucun import Sage ou dépôt DGI n’ont été effectués. Les contrats d’intégration sont testés localement ; leurs identifiants et services réels restent à configurer et à valider séparément. Le PDF est un document de consultation ; la restauration intégrale utilise la sauvegarde technique avec SQLite et les pièces originales.

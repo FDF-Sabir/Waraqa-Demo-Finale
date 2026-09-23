@@ -1,0 +1,12 @@
+import { useEffect, useState } from 'react';
+import { api } from './api';
+import { type Run } from './App';
+export default function TwoFactor({run}:{run:Run}) {
+ const [status,setStatus]=useState<any>(),[enrollment,setEnrollment]=useState<any>(),[codes,setCodes]=useState<string[]>([]),[busy,setBusy]=useState(false);
+ useEffect(()=>{run(async()=>setStatus(await api('/auth/2fa')));},[]);
+ const logout=()=>{sessionStorage.removeItem('waraqa-token');location.reload();};
+ return <section className="u-card"><h3>Authentification à deux facteurs</h3>
+ <p>{status?.enabled ? `Activée · ${status.recoveryRemaining} codes de secours restants.` : 'Non activée. Compatible avec une application TOTP ; aucun SMS ni service externe nécessaire.'}</p>
+ {codes.length ? <><p>Enregistrez ces codes de secours dans un lieu privé. Chaque code est utilisable une fois. Ils ne seront plus affichés après fermeture. Reconnectez-vous ensuite avec un nouveau code.</p><pre style={{overflowWrap:'anywhere',whiteSpace:'pre-wrap'}}>{codes.join('\n')}</pre><button className="primary" onClick={logout}>Codes sauvegardés — se reconnecter</button></> : enrollment ? <form className="u-form" onSubmit={async e=>{e.preventDefault();const code=new FormData(e.currentTarget).get('code');setBusy(true);await run(async()=>{const r=await api('/auth/2fa/confirm','POST',{code});setCodes(r.recoveryCodes);setEnrollment(null);},'2FA activée — sauvegardez les codes');setBusy(false);}}><p>Dans votre application d’authentification, ajoutez un compte TOTP Waraqa avec cette clé. Enrôlement valable 10 minutes.</p><code>{enrollment.secret}</code><label>Code à six chiffres<input name="code" pattern="[0-9]{6}" inputMode="numeric" autoComplete="one-time-code" required /></label><button className="primary" disabled={busy}>Vérifier et activer la 2FA</button></form> : <form className="u-form" onSubmit={async e=>{e.preventDefault();const b=Object.fromEntries(new FormData(e.currentTarget));setBusy(true);await run(async()=>{if(status?.enabled){await api('/auth/2fa/disable','POST',b);logout();}else setEnrollment(await api('/auth/2fa/begin','POST',b));});setBusy(false);}}><label>Mot de passe pour la 2FA<input name="password" type="password" autoComplete="current-password" required /></label>{status?.enabled && <label>Code TOTP ou code de secours<input name="code" autoComplete="one-time-code" required /></label>}<button className="secondary" disabled={busy}>{status?.enabled?'Désactiver la 2FA et révoquer les sessions':'Configurer la 2FA'}</button></form>}
+ </section>;
+}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, money, type RecordItem } from "./api";
+import { api, money, token, type RecordItem } from "./api";
 import { Icon } from "./Icons";
 import { InvoiceTable, Modal, type Page, type Run } from "./App";
 export default function Chat({
@@ -23,14 +23,16 @@ export default function Chat({
   refresh: () => Promise<void>;
   exportFile: (f: string) => Promise<void>;
 }) {
+  const draftKey = 'waraqa-draft-' + token().split('.')[1] + '-' + month;
   const [conversations, setConversations] = useState<RecordItem[]>([]),
     [activeId, setActiveId] = useState(""),
-    [text, setText] = useState(""),
+    [text, setText] = useState(() => sessionStorage.getItem(draftKey) || ""),
     [files, setFiles] = useState<File[]>([]),
     [busy, setBusy] = useState(false),
     [rename, setRename] = useState(false),
     [remove, setRemove] = useState(false),
     [convSearch, setConvSearch] = useState("");
+  const pendingConversation = useRef("");
   const scroll = useRef<HTMLDivElement>(null),
     area = useRef<HTMLTextAreaElement>(null),
     monthRef = useRef(month);
@@ -48,6 +50,7 @@ export default function Chat({
     );
   }
   useEffect(() => {
+    setText(sessionStorage.getItem(draftKey) || '');
     run(load);
   }, [month]);
   useEffect(() => {
@@ -63,13 +66,14 @@ export default function Chat({
       behavior: "smooth",
     });
   }, [messages?.length, busy]);
+  function editDraft(value: string) { setText(value); sessionStorage.setItem(draftKey, value); }
   async function create() {
     const c = await api("/workspace/conversations", "POST", { month });
     setConversations((p) => [c, ...p]);
     setActiveId(c.id);
     return c;
   }
-  async function send(retryText?: string) {
+  async function send(retryText?: string, retryIds: string[] = []) {
     const question =
       (retryText || text).trim() ||
       (files.length ? "Analyse les pièces jointes." : "");
@@ -80,14 +84,15 @@ export default function Chat({
     const ok = await run(async () => {
       let c = active;
       if (!c || c.data.month !== month) c = await create();
-      const documentIds: string[] = [];
+      pendingConversation.current = c!.id;
+      const documentIds: string[] = [...retryIds];
       for (const file of pendingFiles) {
         const data = new FormData();
         data.append("file", file);
         const d = await api("/workspace/documents", "POST", data);
         documentIds.push(d.id);
       }
-      setText("");
+      editDraft("");
       setFiles([]);
       const updated = await api(
         "/workspace/conversations/" + c!.id + "/messages",
@@ -100,10 +105,12 @@ export default function Chat({
       await refresh();
     });
     if (!ok) {
-      setText(sentText || question);
+      editDraft(sentText || question);
+      setFiles(pendingFiles);
       await run(load);
     }
     setBusy(false);
+    pendingConversation.current = "";
   }
   const select = (id: string) => {
     setActiveId(id);
@@ -211,7 +218,7 @@ export default function Chat({
                   Une synthèse, un contrôle ou vos prochaines actions.
                   <br />
                   {mode === "live"
-                    ? "Votre assistant dispose du contexte comptable du mois."
+                    ? "Les totaux couvrent le mois entier. Joignez des pièces pour une analyse détaillée (100 lignes maximum)."
                     : "Commencez sans clé avec les analyses locales de votre dossier."}
                 </p>
                 <div className="u-prompt-grid">
@@ -255,6 +262,8 @@ export default function Chat({
                       {m.documentIds.length} document(s) joint(s) et conservé(s)
                     </small>
                   )}
+                  {m.result?.scope && <p className="u-info">Périmètre : {m.result.scope.totalRows} lignes au total ; {m.result.scope.detailRows} lignes détaillées.{m.result.scope.historyMessages !== undefined ? ` Historique transmis : ${m.result.scope.historyMessages} messages maximum.` : ''}</p>}
+                  {m.result?.usage && <small>Consommation : {m.result.usage.input_tokens} tokens entrants · {m.result.usage.output_tokens} sortants.</small>}
                   {m.result?.type === "table" && (
                     <InvoiceTable rows={m.result.rows} />
                   )}{" "}
@@ -281,7 +290,7 @@ export default function Chat({
                         className="u-text-button"
                         onClick={() =>
                           run(
-                            () => navigator.clipboard.writeText(m.content),
+                            async () => { if (!navigator.clipboard) throw new Error("Presse-papiers indisponible. Sélectionnez le texte puis utilisez Copier."); await navigator.clipboard.writeText(m.content); },
                             "Réponse copiée",
                           )
                         }
@@ -296,12 +305,8 @@ export default function Chat({
                             const idx = messages.findIndex(
                               (x: any) => x.id === m.id,
                             );
-                            send(
-                              messages
-                                .slice(0, idx)
-                                .reverse()
-                                .find((x: any) => x.role === "user")?.content,
-                            );
+                            const original = messages.slice(0, idx).reverse().find((x: any) => x.role === 'user');
+                            send(original?.content, original?.documentIds || []);
                           }}
                         >
                           Réessayer
@@ -326,6 +331,9 @@ export default function Chat({
                         }
                       >
                         Exporter Excel
+                      </button>
+                      <button className="u-text-button" onClick={() => run(() => exportFile('pdf'), 'Relevé PDF téléchargé')}>
+                        Exporter PDF
                       </button>
                     </div>
                   )}
@@ -371,7 +379,7 @@ export default function Chat({
                 rows={3}
                 value={text}
                 disabled={busy}
-                onChange={(e) => setText(e.target.value)}
+                onChange={(e) => editDraft(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
                     e.preventDefault();
@@ -379,6 +387,7 @@ export default function Chat({
                   }
                 }}
               />
+              {busy && <button className="secondary" onClick={() => run(() => api('/workspace/conversations/' + pendingConversation.current + '/cancel', 'POST'))}>Annuler la réponse</button>}
               <div className="u-composer-tools">
                 <label className="u-attach" title="Joindre des pièces">
                   <Icon name="plus" size={20} />

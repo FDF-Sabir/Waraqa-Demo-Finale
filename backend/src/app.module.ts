@@ -1,3 +1,5 @@
+import { Baseline1790121600000 } from "./migrations/1790121600000-Baseline";
+import { Integrity1790121600001 } from "./migrations/1790121600001-Integrity";
 import { UnifiedModule } from './unified/unified.module';
 import { WorkspaceRecord } from './unified/record.entity';
 import { Module } from '@nestjs/common';
@@ -45,7 +47,9 @@ import { NotificationEtatEntity } from './notifications/notification-etat.entity
           ReglageEntity,
           NotificationEtatEntity,
         ],
-        synchronize: true, // schéma géré par synchronize pour cette phase — pas de migrations séparées encore
+        synchronize: false,
+        migrationsRun: true,
+        migrations: [Baseline1790121600000, Integrity1790121600001],
       }),
     }),
     UnifiedModule,

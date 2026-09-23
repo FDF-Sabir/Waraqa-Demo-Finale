@@ -2,7 +2,7 @@
   "name": "waraqa-demo-finale",
   "version": "4.0.0-demo",
   "private": true,
-  "description": "Nouvelle application unifi\u00e9e : services V2, interface, chat et d\u00e9mo locale persistante",
+  "description": "Nouvelle application unifiée : services V2, interface, chat et démo locale persistante",
   "engines": {
     "node": ">=22"
   },
@@ -13,5 +13,8 @@
     "test": "npm test --prefix backend -- --runInBand && npm run test:e2e --prefix backend -- --runInBand && node scripts/smoke.cjs",
     "test:smoke": "node scripts/smoke.cjs",
     "test:ui": "node scripts/ui-test.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
   }
 }

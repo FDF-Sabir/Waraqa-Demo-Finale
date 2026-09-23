@@ -1,3 +1,4 @@
+import { IntegrationsService } from "./integrations.service";
 import { ReglageEntity } from "../reglages/reglage.entity";
 import { Module } from "@nestjs/common";
 import { TypeOrmModule } from "@nestjs/typeorm";
@@ -24,6 +25,6 @@ import { DesignationEntity } from "../designations/designation.entity";
     OcrModule,
   ],
   controllers: [UnifiedController],
-  providers: [UnifiedService],
+  providers: [UnifiedService, IntegrationsService],
 })
 export class UnifiedModule {}

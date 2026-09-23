@@ -1,0 +1,16 @@
+{
+  "passed": 11,
+  "checks": [
+    "Account setup, monthly demo seed and dashboard",
+    "Prompt selection, real local chat response and reload persistence",
+    "Manual invoice, human review and Excel download",
+    "Reviewed ledger PDF download",
+    "Snapshot and archive PDF downloads",
+    "Browser file upload, preview and explicit import confirmation",
+    "All ten navigation pages render",
+    "Settings tabs and persistence",
+    "Mobile layout without horizontal overflow and working navigation",
+    "14 viewport/orientation combinations × 10 pages; CSS zoom 200%",
+    "No browser console errors"
+  ]
+}

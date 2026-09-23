@@ -1,3 +1,5 @@
+import { WorkspaceRecord } from "../unified/record.entity";
+import { TwoFactorService } from "./two-factor.service";
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
@@ -13,7 +15,7 @@ const SECRET_DEV_UNIQUEMENT = 'waraqa-dev-secret-ne-jamais-utiliser-en-productio
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([UtilisateurEntity]),
+    TypeOrmModule.forFeature([UtilisateurEntity, WorkspaceRecord]),
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
@@ -39,6 +41,7 @@ const SECRET_DEV_UNIQUEMENT = 'waraqa-dev-secret-ne-jamais-utiliser-en-productio
   controllers: [AuthController],
   providers: [
     AuthService,
+    TwoFactorService,
     {
       provide: JwtStrategy,
       inject: [ConfigService, getRepositoryToken(UtilisateurEntity)],

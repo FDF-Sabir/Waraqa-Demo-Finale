@@ -207,6 +207,11 @@ pre {
 .u-task button {
   flex-shrink: 0;
 }
+.u-snapshot { flex-wrap: wrap; }
+.u-snapshot > span { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .u-snapshot > span { flex-basis: 100%; }
+}
 .u-insight {
   background: #f1f4ec;
   border-color: #e1e7d8;
@@ -509,6 +514,9 @@ pre {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+}
+.u-export-cards {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .u-cards > section > p {
   flex: 1;
@@ -1288,4 +1296,19 @@ pre {
   .u-drop {
     padding: 25px 15px;
   }
+}
+
+/* Resilience at small widths and 200% zoom. */
+.u-row, .u-actions, .u-toolbar { flex-wrap: wrap; }
+.u-message-body, .u-pad, .pagehead > div, .formgrid > label { min-width: 0; }
+.u-info, .u-message-text, details p, code { overflow-wrap: anywhere; }
+:focus-visible { outline: 3px solid #26775c; outline-offset: 3px; }
+.u-checkbox { display: flex; align-items: center; gap: .5rem; margin: 1rem 0; }
+.u-checkbox input { width: auto; }
+@media (max-width: 420px) { .u-modal { width: calc(100vw - 20px); padding: 16px; } .formgrid { grid-template-columns: 1fr; } }
+@media (max-width: 420px) {
+  .topbar { padding: 0 12px; gap: 8px; }
+  .topactions { gap: 6px; min-width: 0; }
+  .u-period { min-width: 0; gap: 0; }
+  .u-period input { min-width: 0; width: 138px; max-width: 100%; }
 }

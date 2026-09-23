@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { dateIsoValide } from "../common/date-validation";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { FactureEntity } from './facture.entity';
@@ -38,9 +39,13 @@ export class FacturesService {
    * mapping, un taux non légal remontait en 500 Internal Server Error
    * au lieu d'un 400 exploitable par le client.
    */
-  private calculerOuRejeter(mTtc: number, taux: number) {
+  private calculerOuRejeter(mTtc: number, taux: number, creditOf?: number) {
     try {
-      return calculerHtEtTva(mTtc, taux);
+      if (mTtc < 0 && !creditOf) throw new BadRequestException('Un avoir négatif doit être relié à sa facture source.');
+      if (creditOf && mTtc >= 0) throw new BadRequestException('Le montant d’un avoir doit être négatif.');
+      const sign = mTtc < 0 ? -1 : 1;
+      const amounts = calculerHtEtTva(Math.abs(mTtc), taux);
+      return {mHt: sign * amounts.mHt, tva: sign * amounts.tva, mTtc: sign * amounts.mTtc};
     } catch (erreur) {
       if (erreur instanceof TauxInvalideError) {
         throw new BadRequestException(erreur.message);
@@ -61,11 +66,9 @@ export class FacturesService {
    * pipeline déjà testé.
    */
   async listerParMois(mois: string): Promise<FactureEntity[]> {
-    const toutes = await this.lister();
-    return toutes.filter((f) => {
-      const reference = f.datePaie || f.dateFac;
-      return reference?.slice(0, 7) === mois;
-    });
+    return this.repo.createQueryBuilder('f').where('f.archivee = 0')
+      .andWhere("substr(COALESCE(NULLIF(f.datePaie, ''), f.dateFac), 1, 7) = :mois", { mois })
+      .orderBy('f.id', 'ASC').getMany();
   }
 
   /**
@@ -103,14 +106,19 @@ export class FacturesService {
     return facture;
   }
 
-  async creer(dto: CreerFactureDto, auteur: AuteurAction): Promise<FactureEntity> {
+  async creer(dto: CreerFactureDto, auteur: AuteurAction, source?: { documentId: string; importKey: string }): Promise<FactureEntity> {
     if (dto.idPaie !== undefined && !idPaieEstValide(dto.idPaie)) {
       throw new BadRequestException(
         `idPaie invalide : ${dto.idPaie}. Valeurs DGI valides : 1 à 7.`,
       );
     }
 
-    const { mHt, tva, mTtc } = this.calculerOuRejeter(dto.mTtc, dto.taux);
+    if (!dateIsoValide(dto.dateFac) || !dateIsoValide(dto.datePaie)) throw new BadRequestException('Date inexistante.');
+    if (dto.creditOf) {
+      const original = await this.trouver(dto.creditOf);
+      if (original.archivee || original.creditOf || !original.mTtc || original.mTtc <= 0 || [SousType.RELEVE_BANCAIRE, SousType.AVIS_DEBIT_VIREMENT].includes(original.sousType)) throw new BadRequestException('Facture source d’avoir invalide.');
+    }
+    const { mHt, tva, mTtc } = this.calculerOuRejeter(dto.mTtc, dto.taux, dto.creditOf);
 
     const champsPourControle: ChampsBrutsTableau5 = {
       or: dto.or,
@@ -140,7 +148,7 @@ export class FacturesService {
     }
 
     // Détection de doublon — comparaison contre toutes les factures existantes.
-    const existantes: LigneComparable[] = (await this.lister()).map((f) => ({
+    const existantes: LigneComparable[] = (await this.repo.createQueryBuilder("f").where("f.archivee = 0 AND upper(trim(f.factNum)) = :reference", { reference: dto.factNum?.trim().toUpperCase() || "" }).getMany()).map((f) => ({
       id: f.id,
       factNum: f.factNum,
       iceFrs: f.iceFrs,
@@ -154,6 +162,9 @@ export class FacturesService {
 
     const facture = await this.repo.save(
       this.repo.create({
+        creditOf: dto.creditOf,
+        accountingMonth: dto.accountingMonth,
+        fiscalMonth: dto.fiscalMonth,
         or: dto.or,
         factNum: dto.factNum,
         designation: dto.designation,
@@ -174,6 +185,7 @@ export class FacturesService {
         utilisateurId: auteur.utilisateurId,
         saisiPar: auteur.saisiPar,
         lotId: dto.lotId,
+        ...source,
         doublonDe: doublon?.id,
         notifiable: Boolean(doublon) || vigilance || ligneOrpheline,
       }),
@@ -233,6 +245,8 @@ export class FacturesService {
       );
     }
 
+    if (dto.expectedVersion !== undefined && dto.expectedVersion !== facture.version)
+      throw new ConflictException('Cette ligne a changé. Rechargez-la avant de reporter votre saisie.');
     const mTtcEffectif = dto.mTtc ?? facture.mTtc;
     const tauxEffectif = dto.taux ?? facture.taux;
 
@@ -240,7 +254,11 @@ export class FacturesService {
       throw new BadRequestException('mTtc et taux sont requis pour recalculer la ligne.');
     }
 
-    const { mHt, tva, mTtc } = this.calculerOuRejeter(mTtcEffectif, tauxEffectif);
+    if (!dateIsoValide(dto.dateFac) || !dateIsoValide(dto.datePaie)) throw new BadRequestException('Date inexistante.');
+    if (dto.creditOf !== undefined && dto.creditOf !== facture.creditOf) throw new BadRequestException('Le lien de l’avoir est immuable ; archivez et recréez la pièce pour le corriger.');
+    const links = await this.repo.manager.query("SELECT data FROM workspace_records WHERE kind = 'allocation'");
+    if (links.some((r: any) => { const a = JSON.parse(r.data); return !a.cancelled && (a.paymentId === id || a.invoiceId === id); }) && ['mTtc','sousType','taux','datePaie','idPaie'].some(k => (dto as any)[k] !== undefined && (dto as any)[k] !== (facture as any)[k])) throw new ConflictException('Annulez les affectations de paiement avant de modifier les montants, dates ou types.');
+    const { mHt, tva, mTtc } = this.calculerOuRejeter(mTtcEffectif, tauxEffectif, facture.creditOf);
 
     const sousTypeEffectif = dto.sousType ?? facture.sousType;
     const champsPourControle: ChampsBrutsTableau5 = {
@@ -271,6 +289,8 @@ export class FacturesService {
     }
 
     Object.assign(facture, {
+      accountingMonth: dto.accountingMonth ?? facture.accountingMonth,
+      fiscalMonth: dto.fiscalMonth ?? facture.fiscalMonth,
       or: champsPourControle.or,
       factNum: champsPourControle.factNum,
       designation: champsPourControle.designation,
@@ -293,14 +313,17 @@ export class FacturesService {
 
     const autres = (await this.lister()).filter(f => f.id !== id);
     facture.doublonDe = detecterDoublon(facture, autres)?.id ?? null as any;
-    const sauvegardee = await this.repo.save(facture);
+    const { id: rowId, creeLe, modifieLe, version, ...changes } = facture;
+    const updated = await this.repo.update({ id, version }, { ...changes, version: version + 1 });
+    if (!updated.affected) throw new ConflictException('Modification concurrente. Rechargez la ligne ; votre saisie reste disponible.');
+    const sauvegardee = await this.trouver(id);
 
     await this.journal.ecrire({
       action: 'facture_modifiee',
       factureId: id,
       utilisateurId: auteur.utilisateurId,
       saisiPar: auteur.saisiPar,
-      details: { statut, champsManquants: manquants },
+      details: { statut, champsManquants: manquants, champsModifies: Object.keys(dto).filter(k => k !== "expectedVersion"), versionAvant: version },
       notifiable: vigilance,
     });
 

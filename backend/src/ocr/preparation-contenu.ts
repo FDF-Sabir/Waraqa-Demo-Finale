@@ -52,6 +52,7 @@ export async function preparerContenu(
   fichier: Buffer,
   nomFichier: string,
 ): Promise<ContenuPrepare> {
+  if (fichier.length > 20 * 1024 * 1024) throw new Error("Fichier supérieur à 20 Mo.");
   const extension = extensionDe(nomFichier);
 
   // Signal 1 : XLSX/CSV → toujours texte, jamais d'IA vision nécessaire.
@@ -88,7 +89,7 @@ export async function preparerContenu(
   }
 
   // Format inconnu : tentative texte brut en dernier recours.
-  return { type: 'texte', texte: fichier.toString('utf-8').slice(0, 50_000) };
+  return { type: 'texte', texte: fichier.toString('utf-8') };
 }
 
 function extraireTexteTabulaire(fichier: Buffer, extension: string): string {

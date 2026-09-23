@@ -1,3 +1,4 @@
+import { IntegrationsService } from "./integrations.service";
 import {
   BadRequestException,
   Body,
@@ -27,7 +28,15 @@ function month(value: string) {
 }
 @Controller("workspace")
 export class UnifiedController {
-  constructor(private service: UnifiedService) {}
+  constructor(private service: UnifiedService, private integrations: IntegrationsService) {}
+  @UseGuards(JwtAuthGuard) @Get('integrations') integrationsStatus(@UtilisateurCourant() u:any) {return this.integrations.status(u);}
+  @UseGuards(JwtAuthGuard) @Post('drive/start') driveStart(@UtilisateurCourant() u:any) {return this.integrations.start(u);}
+  @Get('drive/callback') async driveCallback(@Query('state') state:string,@Query('code') code:string,@Res() res:Response) {await this.integrations.callback(state,code);res.setHeader('Referrer-Policy','no-referrer');res.redirect('/#/reglages');}
+  @UseGuards(JwtAuthGuard) @Post('drive/disconnect') driveDisconnect(@UtilisateurCourant() u:any) {return this.integrations.disconnect(u);}
+  @UseGuards(JwtAuthGuard) @Post('drive/upload') async driveUpload(@UtilisateurCourant() u:any,@Body() b:any) {await this.service.admin(u);return this.integrations.upload(u,await this.service.get(b.documentId,'document'),await this.service.documentFile(b.documentId),(await this.service.settings()).integrations.driveFolder);}
+  @UseGuards(JwtAuthGuard) @Post('email/test-local') emailTest(@UtilisateurCourant() u:any) {return this.integrations.localMail(u);}
+  @UseGuards(JwtAuthGuard) @Get('email/outbox') emailOutbox(@UtilisateurCourant() u:any) {return this.integrations.outbox(u);}
+  @UseGuards(JwtAuthGuard) @Get('diagnostics') diagnostics(@UtilisateurCourant() u:any) {return this.service.diagnostics(u);}
   @Get("status") status() {
     return this.service.status();
   }
@@ -40,9 +49,25 @@ export class UnifiedController {
   ) {
     return this.service.updateSettings(b, u);
   }
+  @UseGuards(JwtAuthGuard) @Get('invoices') searchInvoices(@Query() q:any) {return this.service.searchInvoices(month(q.month),q.search || '',q.filter || 'all',Number(q.page || 1),Number(q.size || 15),q.sort || 'recent');}
   @UseGuards(JwtAuthGuard) @Get("summary") summary(@Query("month") m: string) {
     return this.service.summary(month(m));
   }
+  @UseGuards(JwtAuthGuard) @Get("backup") async backup(@UtilisateurCourant() u: any, @Res() res: Response) {
+    const buffer = await this.service.backup(u);
+    res.setHeader('Content-Type', 'application/gzip');
+    res.setHeader('Content-Disposition', 'attachment; filename="Waraqa-sauvegarde.waraqa.gz"');
+    res.send(buffer);
+  }
+  @UseGuards(JwtAuthGuard) @Get("archives") archives() { return this.service.archives(); }
+  @UseGuards(JwtAuthGuard) @Get("archives/pdf") async archivesPdf(@Res() res: Response) {
+    const buffer = await this.service.archivesPdf();
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="Waraqa-archives.pdf"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(buffer);
+  }
+  @UseGuards(JwtAuthGuard) @Post("invoices/:id/restore") restore(@Param('id', ParseIntPipe) id: number, @UtilisateurCourant() u: any) { return this.service.restoreInvoice(id, u); }
   @UseGuards(JwtAuthGuard) @Post("seed") seed(
     @Body() b: any,
     @UtilisateurCourant() u: any,
@@ -75,9 +100,13 @@ export class UnifiedController {
   @UseInterceptors(
     FileInterceptor("file", { limits: { fileSize: 20 * 1024 * 1024 } }),
   )
-  upload(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any) {
-    return this.service.upload(f, u);
+  upload(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any, @Query("preview") preview?: string) {
+    return this.service.upload(f, u, preview === "true");
   }
+  @UseGuards(JwtAuthGuard) @Get("documents/:id/preview") preview(@Param('id') id: string) { return this.service.importPreview(id); }
+  @UseGuards(JwtAuthGuard) @Put("documents/:id/mapping") mapping(@Param('id') id: string, @Body() b: any) { return this.service.importPreview(id, b.mapping); }
+  @UseGuards(JwtAuthGuard) @Post("documents/:id/commit") commit(@Param('id') id: string, @UtilisateurCourant() u: any) { return this.service.resumeImport(id, u); }
+  @UseGuards(JwtAuthGuard) @Post("documents/:id/cancel") cancelImport(@Param('id') id: string) { return this.service.cancelImport(id); }
   @UseGuards(JwtAuthGuard) @Post("documents/:id/retry") retry(
     @Param("id") id: string,
     @UtilisateurCourant() u: any,
@@ -135,6 +164,8 @@ export class UnifiedController {
   ) {
     return this.service.password(b, u);
   }
+  @UseGuards(JwtAuthGuard) @Get("allocations") allocations() { return this.service.allocations(); }
+  @UseGuards(JwtAuthGuard) @Post("allocations/:id/cancel") cancelAllocation(@Param('id') id: string, @Body() b: any, @UtilisateurCourant() u: any) { return this.service.cancelAllocation(id, b.reason, u); }
   @UseGuards(JwtAuthGuard) @Get("reconciliation") candidates(
     @Query("month") m: string,
   ) {
@@ -146,10 +177,17 @@ export class UnifiedController {
   ) {
     if (!Number.isInteger(b.paymentId) || !Number.isInteger(b.invoiceId))
       throw new BadRequestException("Identifiants requis.");
-    return this.service.reconcile(b.paymentId, b.invoiceId, u);
+    return this.service.reconcile(b.paymentId, b.invoiceId, u, b.amount);
   }
   @UseGuards(JwtAuthGuard) @Get("snapshots") snapshots() {
     return this.service.list("snapshot");
+  }
+  @UseGuards(JwtAuthGuard) @Get("snapshots/:id/pdf") async snapshotPdf(@Param('id') id: string, @Res() res: Response) {
+    const buffer = await this.service.snapshotPdf(id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="Waraqa-snapshot.pdf"');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(buffer);
   }
   @UseGuards(JwtAuthGuard) @Post("snapshots") snapshot(
     @Body() b: any,
@@ -161,11 +199,13 @@ export class UnifiedController {
     @Query("month") m: string,
     @Query("format") format: string,
     @Query("scope") scope: string,
+    @Query("examples") examples: string,
     @UtilisateurCourant() u: any,
     @Res() res: Response,
   ) {
-    const f = await this.service.export(month(m), format, scope, u);
+    const f = await this.service.export(month(m), format, scope, u, examples === "true");
     res.setHeader("Content-Type", f.mime);
+    res.setHeader("Cache-Control", "no-store");
     res.setHeader("Content-Disposition", `attachment; filename="${f.name}"`);
     res.send(f.buffer);
   }
@@ -200,6 +240,7 @@ export class UnifiedController {
   ) {
     return this.service.deleteConversation(id, u);
   }
+  @UseGuards(JwtAuthGuard) @Post("conversations/:id/cancel") cancel(@Param('id') id: string, @UtilisateurCourant() u: any) { return this.service.cancelChat(id, u); }
   @UseGuards(JwtAuthGuard) @Post("conversations/:id/messages") chat(
     @Param("id") id: string,
     @Body() b: any,

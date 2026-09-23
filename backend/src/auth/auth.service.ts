@@ -1,3 +1,4 @@
+import { TwoFactorService } from "./two-factor.service";
 import {
   ConflictException,
   Injectable,
@@ -38,9 +39,16 @@ export class AuthService {
     @InjectRepository(UtilisateurEntity)
     private readonly utilisateurs: Repository<UtilisateurEntity>,
     private readonly jwtService: JwtService,
+    private readonly twoFactor: TwoFactorService,
   ) {}
 
+  private registering = false;
   async inscrire(dto: InscriptionDto): Promise<ReponseAuth> {
+    if (this.registering) throw new ConflictException('Création du compte en cours.');
+    this.registering = true;
+    try { return await this.inscrireInternal(dto); } finally { this.registering = false; }
+  }
+  private async inscrireInternal(dto: InscriptionDto): Promise<ReponseAuth> {
     if (process.env.NODE_ENV !== 'test' && await this.utilisateurs.count() > 0) throw new ForbiddenException('Inscription fermée. Demandez un compte à votre administrateur.');
     const existant = await this.utilisateurs.findOne({ where: { email: dto.email } });
     if (existant) {
@@ -74,6 +82,7 @@ export class AuthService {
       throw new UnauthorizedException('Identifiants invalides.');
     }
 
+    await this.twoFactor.verify(utilisateur.id, dto.otp);
     return this.emettreToken(utilisateur);
   }
 

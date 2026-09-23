@@ -1,3 +1,4 @@
+import { TwoFactorService } from "./two-factor.service";
 import { Body, Controller, Get, HttpCode, Post, UseGuards } from '@nestjs/common';
 import { AuthService, ReponseAuth, UtilisateurPublic } from './auth.service';
 import { InscriptionDto } from './dto/inscription.dto';
@@ -37,8 +38,12 @@ function versCompat(reponse: ReponseAuth): ReponseAuthCompat {
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(private readonly authService: AuthService, private readonly twoFactor: TwoFactorService) {}
 
+  @UseGuards(JwtAuthGuard) @Get('2fa') status2fa(@UtilisateurCourant() u: JwtPayload) { return this.twoFactor.status(u.sub); }
+  @UseGuards(JwtAuthGuard) @Post('2fa/begin') begin2fa(@UtilisateurCourant() u: JwtPayload, @Body() b: any) { return this.twoFactor.begin(u.sub,b.password); }
+  @UseGuards(JwtAuthGuard) @Post('2fa/confirm') confirm2fa(@UtilisateurCourant() u: JwtPayload, @Body() b: any) { return this.twoFactor.confirm(u.sub,b.code); }
+  @UseGuards(JwtAuthGuard) @Post('2fa/disable') disable2fa(@UtilisateurCourant() u: JwtPayload, @Body() b: any) { return this.twoFactor.disable(u.sub,b.password,b.code); }
   @Post('inscription')
   async inscription(@Body() dto: InscriptionDto): Promise<ReponseAuth> {
     return this.authService.inscrire(dto);

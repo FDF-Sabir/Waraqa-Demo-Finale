@@ -46,6 +46,7 @@ Les PDF/images déjà conservés sans clé peuvent être extraits avec le bouton
 - Désignations existantes V2, nouvelles propositions et confirmation ; ajout manuel.
 - Journal, notifications réellement persistantes, états lue/traitée.
 - Export Excel `.xlsx`, CSV Tableau5, CSV de préparation Sage avec mapping des comptes et écritures équilibrées au centime.
+- Relevés, archives et snapshots PDF en couleurs : synthèse HT/TVA/TTC, graphiques fournisseurs et revue, tableaux paginés. Les relevés PDF reprennent exactement la sélection Excel ; les fichiers Excel importés ne sont pas convertis.
 - Snapshots immuables et snapshots automatiques pendant que le serveur est actif.
 - Entreprise, assistant, préférences, exports, utilisateurs, changement du mot de passe et statut des intégrations.
 
@@ -60,10 +61,10 @@ Les PDF/images déjà conservés sans clé peuvent être extraits avec le bouton
 | Exports | Fichiers réellement générés et téléchargés |
 | Sage 100 | CSV équilibré à mapper dans l’assistant d’import ; aucune connexion directe à Sage |
 | DGI | Tableau de travail EDI, aucun XML officiel ni dépôt automatique/certification |
-| Google Drive | Dossier de destination mémorisable ; OAuth non implémenté, bouton désactivé et état non connecté |
+| Google Drive | Connecteur OAuth implémenté ; configuration et essai sur compte réel restent nécessaires |
 | Email / push hors application | Non raccordés ; la cloche interne fonctionne |
-| 2FA | Non implémentée, état explicite ; pas de faux interrupteur de sécurité |
-| Snapshots planifiés | Réels, locaux, uniquement serveur ouvert ; aucun rattrapage des exécutions manquées |
+| 2FA | TOTP et codes de secours implémentés, vérifiés par tests automatisés locaux |
+| Snapshots planifiés | Locaux, avec paramètres de fuseau horaire et rattrapage ; nécessitent le serveur actif |
 
 Ces limites existaient sous forme de simulations dans les interfaces d’origine ; elles ne sont pas présentées comme des services opérationnels.
 
@@ -81,11 +82,25 @@ Ces limites existaient sous forme de simulations dans les interfaces d’origine
 
 ## Données et sauvegarde
 
+### Relevé Excel ou PDF
+
+Dans **Exports & snapshots**, choisissez la même sélection pour **Relevé Excel** ou **Relevé PDF illustré**. Les exemples sont exclus par défaut. L’option « Toutes les lignes hors banque » marque le document **BROUILLON**. Les graphiques proviennent uniquement des lignes exportées ; les avoirs conservent leur signe et les paiements bancaires n’augmentent pas les achats. Les 13 champs Tableau5 sont répartis dans deux tableaux lisibles, avec les mêmes identifiants de ligne.
+
+Le PDF est aussi disponible dans **Pièces & relevé TVA → PDF des lignes revues** et dans les actions de la discussion. Les boutons de la discussion exportent le relevé de la période, pas le texte de la conversation. Les originaux importés restent disponibles dans leur format initial.
+
+Des exemples entièrement fictifs sont fournis dans `docs/exemples-exports/`. Pour les régénérer après compilation : `node scripts/pdf-preview.cjs`.
+
+### Archives et restauration
+
+Dans **Exports & snapshots → Sauvegarde et archives**, **Sauvegarder les archives en PDF** télécharge les lignes archivées avec leurs références, montants et statuts. Chaque snapshot dispose aussi d’un bouton **Télécharger le PDF** : il reprend les lignes et les totaux figés à sa création, même si les factures ont changé depuis.
+
+Le PDF est une copie de consultation. Pour restaurer l’espace complet avec ses comptes et pièces originales, utilisez le téléchargement distinct dans **Sauvegarde complète et restauration**.
+
 `backend/data/waraqa.sqlite` contient les utilisateurs, factures, conversations, modèles et réglages. `backend/data/files/` contient les pièces originales. Arrêter le serveur avant de copier **tout `backend/data/`** pour une sauvegarde cohérente. Ne pas supprimer la base pour résoudre un problème d’affichage.
 
 Le secret de session se trouve dans `backend/.env`, jamais livré prérempli. Un changement de mot de passe invalide les anciennes sessions. La suppression d’un compte révoque son accès ; ses actions historiques restent dans le journal.
 
-L’archivage retire une ligne des vues actives et des exports ; le journal est conservé. Il n’y a pas encore de bouton de restauration d’archive. Les données des archives d’origine et leur ancienne base SQLite ne sont pas copiées dans le nouveau dossier : la démo démarre proprement.
+L’archivage retire une ligne des vues actives et des exports ; le journal est conservé. Dans **Sauvegarde et archives**, le bouton **Restaurer** réactive la ligne et impose une nouvelle revue. La sauvegarde technique complète inclut SQLite et les pièces originales ; sa restauration se fait dans un dossier distinct avec contrôle des empreintes.
 
 ## Développement
 

@@ -1,3 +1,5 @@
+import Integrations from "./Integrations";
+import TwoFactor from "./TwoFactor";
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import { Modal, PageHead, type Run } from "./App";
@@ -323,31 +325,17 @@ export default function Settings({
                 </label>
                 <button className="primary">Modifier le mot de passe</button>
               </form>
-              <div className="u-info">
-                Connexion locale avec mot de passe haché et session signée.
-                L’authentification à deux facteurs n’est pas implémentée dans
-                cette démo.
-              </div>
+              <TwoFactor run={run} />
             </>
           )}
           {tab === "integrations" && (
             <>
               <h2>Connexions & automatisation</h2>
-              <div className="u-card">
-                <h3>Google Drive</h3>
-                <p>
-                  Non connecté. L’interface d’origine simulait cette connexion.
-                  Aucun fichier n’est envoyé à Drive dans cette version.
-                </p>
-                {field(
-                  "integrations",
-                  "driveFolder",
-                  "Référence du dossier à connecter ultérieurement",
-                )}
-                <button className="secondary" disabled>
-                  Connexion OAuth à configurer
-                </button>
-              </div>
+              {user.role === 'admin' ? <Integrations run={run} /> : <p>Les connecteurs externes sont gérés par l’administrateur.</p>}
+              {field('integrations','driveFolder','Identifiant du dossier Google Drive autorisé')}
+              <label>Fuseau du planificateur<input value={form.integrations.timeZone || 'Africa/Casablanca'} onChange={e=>set('integrations','timeZone',e.target.value)} /></label>
+              <label>Rattrapage au démarrage (jours, maximum 7)<input type="number" min="0" max="7" value={form.integrations.catchUpDays || 0} onChange={e=>set('integrations','catchUpDays',Number(e.target.value))} /></label>
+              <p>Un rattrapage photographie les données au moment du redémarrage. Il ne reconstitue pas leur état historique.</p>
               <div className="u-task">
                 <span>
                   <b>Snapshots automatiques locaux</b>
