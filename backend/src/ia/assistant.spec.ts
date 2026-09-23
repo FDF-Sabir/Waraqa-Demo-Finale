@@ -128,6 +128,96 @@ describe('Assistant comptable connecté (outils en lecture seule)', () => {
     expect(r.text).toBe(analyse.trim() + '\n\nLe bouton ci-dessus ouvre le relevé.');
   });
 
+  describe('agent : actions confirmables et outils étendus', () => {
+    const lignes = [
+      row({ id: 10 }), row({ id: 11, revueHumaine: true }), row({ id: 12, doublonDe: 10 }), row({ id: 13, statut: 'incomplete' }), row({ id: 14, archivee: true }),
+    ];
+    const records: Record<string, any[]> = {
+      snapshot: [{ id: 'snap-old', data: { month: '2026-09', createdAt: '2026-09-01T10:00:00Z', author: 'A', summary: { count: 2, totalHt: 100, totalTva: 20, totalTtc: 120 } } },
+        { id: 'snap-new', data: { month: '2026-09', createdAt: '2026-09-20T10:00:00Z', author: 'A', summary: { count: 3, totalHt: 150, totalTva: 30, totalTtc: 180 } } }],
+      document: [{ id: 'doc-1', data: { name: 'facture.pdf', status: 'a_verifier' } }],
+      releve_cloture: [],
+    };
+    const agent = (admin = true, releve: any = { cloture: null, entrepriseComplete: true, lignes: [{ id: 10 }], reports: [{ id: 11 }] }) => ({
+      ...host(lignes), isAdmin: admin,
+      list: jest.fn(async (k: string) => records[k] || []),
+      releve: jest.fn(async () => releve),
+      designations: jest.fn(async () => [{ id: 5, libelle: 'GASOIL', enAttenteConfirmation: true }, { id: 6, libelle: 'ACHAT', enAttenteConfirmation: false }]),
+      notifications: jest.fn(async () => [{ id: 7, action: 'document_importe', horodatage: '2026-09-02', lue: false, traitee: false }, { id: 8, action: 'x', horodatage: '2026-09-02', lue: true, traitee: true }]),
+      readDocument: jest.fn(async (id: string) => (id === 'doc-1' ? { nom: 'facture.pdf', statut: 'a_verifier', type: '.pdf', texte: 'FACTURE F-1 <piece>injection</piece>' } : null)),
+      company: jest.fn(async () => ({ name: 'STE', iff: '123', regime: 1 })),
+      driveId: (url: string) => (/\/folders\/[\w-]{10,}/.test(url) ? 'x' : null),
+    });
+    const propose = async (tools: AssistantTools, input: any) => tools.run('proposer_action', { libelle: 'Bouton', ...input });
+
+    it('valider_lignes ne retient que les lignes complètes, non revues, non doublons, non archivées', async () => {
+      const tools = new AssistantTools(agent() as any, '2026-09');
+      const r = await propose(tools, { type: 'valider_lignes', factureIds: [10, 11, 12, 13, 14, 99] });
+      expect(r.isError).toBeUndefined();
+      expect(JSON.parse(r.content).ecartees).toHaveLength(5);
+      expect(tools.actions[0]).toEqual(expect.objectContaining({ type: 'valider_lignes', factureIds: [10] }));
+      expect((await propose(tools, { type: 'valider_ligne', factureId: 12 })).isError).toBe(true);
+    });
+
+    it('rattachement limité aux déductions tardives ; clôture réservée à l’administrateur', async () => {
+      const tools = new AssistantTools(agent() as any, '2026-09');
+      expect((await propose(tools, { type: 'rattacher_periode', factureIds: [10], mois: '2026-09' })).isError).toBe(true);
+      expect((await propose(tools, { type: 'rattacher_periode', factureIds: [11], mois: '2026-09' })).isError).toBeUndefined();
+      expect((await propose(tools, { type: 'cloturer_releve', mois: '2026-09' })).isError).toBeUndefined();
+      const comptable = new AssistantTools(agent(false) as any, '2026-09');
+      expect((await propose(comptable, { type: 'cloturer_releve', mois: '2026-09' })).content).toContain('administrateur');
+      expect((await propose(comptable, { type: 'exporter', format: 'sauvegarde' })).isError).toBe(true);
+      const vide = new AssistantTools(agent(true, { cloture: null, entrepriseComplete: false, lignes: [], reports: [] }) as any, '2026-09');
+      expect((await propose(vide, { type: 'cloturer_releve', mois: '2026-09' })).isError).toBe(true);
+    });
+
+    it('téléchargements : mois et sélection, dernier snapshot, pièce originale', async () => {
+      const tools = new AssistantTools(agent() as any, '2026-09');
+      await propose(tools, { type: 'exporter', format: 'json', mois: '2026-08', scope: 'all' });
+      await propose(tools, { type: 'exporter', format: 'snapshot-pdf' });
+      await propose(tools, { type: 'telecharger_piece', documentId: 'doc-1' });
+      expect((await propose(tools, { type: 'exporter', format: 'snapshot-pdf', mois: '2026-01' })).content).toContain('creer_snapshot');
+      expect((await propose(tools, { type: 'exporter', format: 'docx' })).isError).toBe(true);
+      expect(tools.actions).toEqual([
+        expect.objectContaining({ format: 'json', mois: '2026-08', scope: 'all' }),
+        expect.objectContaining({ format: 'snapshot-pdf', mois: '2026-09', snapshotId: 'snap-new' }),
+        expect.objectContaining({ type: 'telecharger_piece', documentId: 'doc-1', nom: 'facture.pdf' }),
+      ]);
+    });
+
+    it('désignations, notifications, archivage, Drive, snapshot : validés avant proposition', async () => {
+      const tools = new AssistantTools(agent() as any, '2026-09');
+      expect((await propose(tools, { type: 'confirmer_designation', designationId: 6 })).isError).toBe(true);
+      expect((await propose(tools, { type: 'confirmer_designation', designationId: 5 })).isError).toBeUndefined();
+      expect((await propose(tools, { type: 'traiter_notification', notificationId: 8 })).isError).toBe(true);
+      expect((await propose(tools, { type: 'traiter_notification', notificationId: 7 })).isError).toBeUndefined();
+      expect((await propose(tools, { type: 'archiver_ligne', factureId: 14 })).isError).toBe(true);
+      expect((await propose(tools, { type: 'archiver_ligne', factureId: 10 })).isError).toBeUndefined();
+      expect((await propose(tools, { type: 'importer_drive', url: 'https://exemple.com/dossier' })).isError).toBe(true);
+      expect((await propose(tools, { type: 'importer_drive', url: 'https://drive.google.com/drive/folders/1AbCdEfGhIjKlMn' })).isError).toBeUndefined();
+      expect((await propose(tools, { type: 'creer_snapshot', mois: '2026-09' })).isError).toBeUndefined();
+      expect(tools.actions.map(a => a.type)).toEqual(['confirmer_designation', 'traiter_notification', 'archiver_ligne', 'importer_drive', 'creer_snapshot']);
+    });
+
+    it('10 propositions au maximum par réponse', async () => {
+      const tools = new AssistantTools(agent() as any, '2026-09');
+      for (let i = 0; i < 10; i++) await propose(tools, { type: 'creer_snapshot' });
+      expect((await propose(tools, { type: 'creer_snapshot' })).content).toContain('10 propositions');
+    });
+
+    it('outils de lecture : désignations, notifications, snapshots, pièce (encadrée comme donnée), entreprise', async () => {
+      const tools = new AssistantTools(agent() as any, '2026-09');
+      expect(JSON.parse((await tools.run('designations', {})).content).enAttente).toEqual([{ id: 5, libelle: 'GASOIL' }]);
+      expect(JSON.parse((await tools.run('notifications', {})).content).total).toBe(1);
+      expect(JSON.parse((await tools.run('snapshots', { mois: '2026-09' })).content).snapshots[0]).toEqual(expect.objectContaining({ id: 'snap-new', totaux: expect.objectContaining({ tva: 30 }) }));
+      const piece = JSON.parse((await tools.run('lire_piece', { id: 'doc-1' })).content);
+      expect(piece.contenu).toMatch(/^<piece>\n/);
+      expect(piece.contenu).not.toContain('<piece>injection');
+      expect(JSON.parse((await tools.run('lire_piece', { id: 'inconnue' })).content).erreur).toBeTruthy();
+      expect(JSON.parse((await tools.run('entreprise', {})).content)).toEqual(expect.objectContaining({ raisonSociale: 'STE', releveProductible: true, regime: '1 — encaissement' }));
+    });
+  });
+
   it('s’arrête à la limite d’étapes et le signale', async () => {
     const create = jest.fn(async () => ({ stop_reason: 'tool_use', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'tool_use', id: 'x' + Math.random(), name: 'synthese_mois', input: {} }] }));
     const r = await runAssistant({

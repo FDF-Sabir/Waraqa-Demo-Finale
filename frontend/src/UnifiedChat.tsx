@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, money, token, type RecordItem } from "./api";
+import { api, download, money, token, type RecordItem } from "./api";
 import { Icon } from "./Icons";
 import { InvoiceTable, Modal, type Page, type Run } from "./App";
 import Markdown from "./Markdown";
@@ -21,7 +21,27 @@ function UsageLine({ usage, cached }: { usage: any; cached?: any }) {
 const SOURCE_LABELS: Record<string, string> = {
   synthese_mois: "Synthèse", rechercher_lignes: "Lignes", detail_ligne: "Détail", anomalies: "Anomalies",
   top_fournisseurs: "Fournisseurs", rapprochement: "Rapprochement", pieces: "Pièces", journal: "Journal", proposer_action: "Action",
+  releve_deduction: "Relevé de déduction", imports: "Imports", designations: "Désignations", notifications: "Notifications",
+  snapshots: "Snapshots", lire_piece: "Pièce", entreprise: "Entreprise",
 };
+
+/** Actions proposées par l'assistant qui modifient les données : confirmation explicite avant exécution. */
+const MODIFYING = ["valider_ligne", "valider_lignes", "rattacher_periode", "cloturer_releve", "importer_drive", "creer_snapshot", "confirmer_designation", "traiter_notification", "archiver_ligne"];
+function describeAction(a: any) {
+  const list = (ids: number[]) => ids.slice(0, 12).map((id) => "#" + id).join(", ") + (ids.length > 12 ? ` … (${ids.length} au total)` : "");
+  switch (a.type) {
+    case "valider_ligne": return `Marquer la ligne #${a.factureId} comme revue (vous confirmez avoir contrôlé la pièce).`;
+    case "valider_lignes": return `Marquer ${a.factureIds.length} ligne(s) comme revues : ${list(a.factureIds)}. Vous confirmez avoir contrôlé les pièces.`;
+    case "rattacher_periode": return `Déclarer ${a.factureIds.length} paiement(s) antérieur(s) sur le relevé de ${a.mois} : ${list(a.factureIds)}.`;
+    case "cloturer_releve": return `Clôturer le relevé de déduction de ${a.mois} : les lignes déclarées restent rattachées à cette période.`;
+    case "importer_drive": return `Importer toutes les pièces du dossier Google Drive : ${a.url}`;
+    case "creer_snapshot": return `Créer un snapshot figé de ${a.mois} (copié dans Google Drive si connecté).`;
+    case "confirmer_designation": return `Confirmer la désignation en attente #${a.designationId}.`;
+    case "traiter_notification": return `Marquer la notification #${a.notificationId} comme traitée.`;
+    case "archiver_ligne": return `Archiver la ligne #${a.factureId} (restaurable depuis Exports & snapshots).`;
+    default: return a.libelle;
+  }
+}
 export default function Chat({
   month,
   go,
@@ -160,6 +180,45 @@ export default function Chat({
     }
     setBusy(false);
     pendingConversation.current = "";
+  }
+  const [done, setDone] = useState<Record<string, boolean>>({});
+  function downloadAction(a: any) {
+    const m = a.mois || month, scope = a.scope || "reviewed", f = a.format;
+    if (a.type === "telecharger_piece") return download(`/workspace/documents/${a.documentId}/file`, a.nom || "piece");
+    if (f.startsWith("releve-")) return download(`/workspace/releve/export?month=${m}&format=${f.slice(7)}&scope=${scope}`, `Releve-deduction-${m}${scope === "all" ? "-BROUILLON" : ""}.${f.slice(7)}`);
+    if (f === "snapshot-pdf") return download(`/workspace/snapshots/${a.snapshotId}/pdf`, `Waraqa-snapshot-${m}.pdf`);
+    if (f === "archives-pdf") return download("/workspace/archives/pdf", "Waraqa-archives.pdf");
+    if (f === "sauvegarde") return download("/workspace/backup", "Waraqa-sauvegarde.waraqa.gz");
+    const ext = f === "xlsx" ? "xlsx" : f === "pdf" ? "pdf" : f === "json" ? "json" : "csv";
+    return download(`/workspace/export?month=${m}&format=${f}&scope=${scope}`, `Waraqa-${f}-${m}${scope === "all" ? "-BROUILLON" : ""}.${ext}`);
+  }
+  async function executeAction(a: any) {
+    switch (a.type) {
+      case "valider_ligne": await api(`/factures/${a.factureId}/valider`, "POST"); break;
+      case "valider_lignes": {
+        const failed: string[] = [];
+        for (const id of a.factureIds) await api(`/factures/${id}/valider`, "POST").catch((e) => failed.push(`#${id} : ${e.message}`));
+        if (failed.length) throw new Error(`${a.factureIds.length - failed.length}/${a.factureIds.length} ligne(s) validée(s). Refus : ${failed.slice(0, 5).join(" ; ")}`);
+        break;
+      }
+      case "rattacher_periode": await api("/workspace/releve/attach", "POST", { ids: a.factureIds, month: a.mois }); break;
+      case "cloturer_releve": await api("/workspace/releve/close", "POST", { month: a.mois }); break;
+      case "importer_drive":
+        try { await api("/workspace/imports/drive", "POST", { url: a.url }); }
+        catch (e: any) {
+          if (e.code !== "drive_lecture_requise") throw e;
+          const r = await api("/workspace/drive/start", "POST", { readonly: true });
+          location.href = r.url;
+          return;
+        }
+        break;
+      case "creer_snapshot": await api("/workspace/snapshots", "POST", { month: a.mois }); break;
+      case "confirmer_designation": await api(`/designations/${a.designationId}/confirmer`, "POST"); break;
+      case "traiter_notification": await api(`/notifications/${a.notificationId}/marquer-traitee`, "POST"); break;
+      case "archiver_ligne": await api(`/workspace/invoices/${a.factureId}/archive`, "POST"); break;
+    }
+    await refresh();
+    window.dispatchEvent(new Event("workspace-changed"));
   }
   const select = (id: string) => {
     setActiveId(id);
@@ -322,22 +381,25 @@ export default function Chat({
                   {m.result?.actions?.length > 0 && (
                     <div className="u-ai-actions">
                       <small>Actions proposées — rien n’est exécuté sans votre clic</small>
-                      {m.result.actions.map((a: any, n: number) => (
-                        <button
-                          key={n}
-                          className="secondary small"
-                          title={a.justification || ""}
-                          disabled={busy}
-                          onClick={() => {
-                            if (a.type === "ouvrir_page") go(a.page);
-                            else if (a.type === "ouvrir_ligne") run(() => openInvoice(a.factureId));
-                            else if (a.type === "exporter") run(() => exportFile(a.format), "Fichier téléchargé");
-                            else if (a.type === "rapprocher") setConfirm(a);
-                          }}
-                        >
-                          {a.libelle}
-                        </button>
-                      ))}
+                      {m.result.actions.map((a: any, n: number) => {
+                        const key = m.id + ":" + n;
+                        return (
+                          <button
+                            key={n}
+                            className="secondary small"
+                            title={a.justification || ""}
+                            disabled={busy || done[key]}
+                            onClick={() => {
+                              if (a.type === "ouvrir_page") go(a.page);
+                              else if (a.type === "ouvrir_ligne") run(() => openInvoice(a.factureId));
+                              else if (a.type === "exporter" || a.type === "telecharger_piece") run(() => downloadAction(a), "Fichier téléchargé");
+                              else setConfirm({ ...a, key });
+                            }}
+                          >
+                            {done[key] ? "✓ " : ""}{a.libelle}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                   {m.result?.sources?.length > 0 && (
@@ -503,7 +565,7 @@ export default function Chat({
                     type="file"
                     aria-label="Joindre des pièces au chat"
                     multiple
-                    accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.csv,.json,.zip"
+                    accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.xlsx,.xls,.csv,.json,.zip"
                     disabled={busy}
                     onChange={(e) => {
                       // Liste lue avant la remise à zéro du champ : la mise à jour d'état peut être différée.
@@ -549,7 +611,27 @@ export default function Chat({
           </div>
         </section>
       </div>
-      {confirm && (
+      {confirm && MODIFYING.includes(confirm.type) && (
+        <Modal title="Confirmer l’action proposée ?" close={() => setConfirm(null)}>
+          <p>{describeAction(confirm)}</p>
+          {confirm.justification && <p className="u-info">{confirm.justification}</p>}
+          <p>Les contrôles habituels du serveur s’appliquent et l’action est tracée dans le journal.</p>
+          <button
+            className="primary"
+            onClick={() =>
+              run(async () => {
+                const key = confirm.key;
+                await executeAction(confirm);
+                setDone((d) => ({ ...d, [key]: true }));
+                setConfirm(null);
+              }, "Action effectuée")
+            }
+          >
+            Confirmer
+          </button>
+        </Modal>
+      )}
+      {confirm?.type === "rapprocher" && (
         <Modal title="Confirmer le rapprochement proposé ?" close={() => setConfirm(null)}>
           <p>
             Paiement <b>#{confirm.paymentId}</b> → facture <b>#{confirm.invoiceId}</b> pour <b>{money(confirm.montant)} MAD</b>.
@@ -561,6 +643,7 @@ export default function Chat({
             onClick={() =>
               run(async () => {
                 await api("/workspace/reconciliation", "POST", { paymentId: confirm.paymentId, invoiceId: confirm.invoiceId, amount: confirm.montant });
+                setDone((d) => ({ ...d, [confirm.key]: true }));
                 setConfirm(null);
                 await refresh();
               }, "Rapprochement enregistré")

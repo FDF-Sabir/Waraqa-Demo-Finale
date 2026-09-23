@@ -20,8 +20,9 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 describe('IA connectée (client simulé)', () => {
   let app: INestApplication, dir: string, token = '', service: UnifiedService;
   const calls: any[] = [];
-  let scenario: 'synthese' | 'action' = 'synthese';
+  let scenario: 'synthese' | 'action' | 'agent' = 'synthese';
   let actionTarget = 0;
+  let agentIds: number[] = [];
   const fake = {
     models: { retrieve: jest.fn(async (id: string) => ({ id, display_name: 'Claude Sonnet 5 (simulé)' })) },
     messages: {
@@ -37,6 +38,13 @@ describe('IA connectée (client simulé)', () => {
         const last = params.messages[params.messages.length - 1];
         const answered = Array.isArray(last.content) && last.content.some((b: any) => b.type === 'tool_result');
         if (!answered) {
+          if (scenario === 'agent') return { stop_reason: 'tool_use', usage, content: [
+            { type: 'text', text: 'Analyse du dossier de septembre : lignes complètes à valider, export et snapshot demandés. ' + 'Détail des contrôles effectués sur chaque ligne avant proposition. '.repeat(3) },
+            { type: 'tool_use', id: 'a1-' + calls.length, name: 'proposer_action', input: { type: 'valider_lignes', factureIds: agentIds, libelle: 'Valider les lignes conformes' } },
+            { type: 'tool_use', id: 'a2-' + calls.length, name: 'proposer_action', input: { type: 'exporter', format: 'json', scope: 'all', libelle: 'Télécharger en JSON' } },
+            { type: 'tool_use', id: 'a3-' + calls.length, name: 'proposer_action', input: { type: 'creer_snapshot', libelle: 'Créer le snapshot' } },
+            { type: 'tool_use', id: 'a4-' + calls.length, name: 'proposer_action', input: { type: 'cloturer_releve', mois: MONTH, libelle: 'Clôturer' } },
+          ] };
           const tool = scenario === 'action'
             ? { type: 'tool_use', id: 'tu-' + calls.length, name: 'proposer_action', input: { type: 'ouvrir_ligne', factureId: actionTarget, libelle: 'Compléter la ligne' } }
             : { type: 'tool_use', id: 'tu-' + calls.length, name: 'synthese_mois', input: {} };
@@ -142,6 +150,62 @@ describe('IA connectée (client simulé)', () => {
     const progress = await auth(api().get(`/api/workspace/conversations/${c.body.id}/progress`)).expect(200);
     expect(progress.body).toEqual({ busy: false, steps: [] });
     scenario = 'synthese';
+  });
+
+  it('agent : propose plusieurs actions vérifiées ; chacune s’exécute par sa route habituelle, tracée', async () => {
+    const invoices = (await auth(api().get('/api/factures?mois=' + MONTH)).expect(200)).body;
+    agentIds = invoices.map((f: any) => f.id);
+    scenario = 'agent';
+    const c = await auth(api().post('/api/workspace/conversations')).send({ month: MONTH }).expect(201);
+    const r = await auth(api().post(`/api/workspace/conversations/${c.body.id}/messages`)).send({ text: 'Valide ce qui est conforme, donne-moi le JSON et fais un snapshot', noCache: true }).expect(201);
+    scenario = 'synthese';
+    const reply = r.body.data.messages[1];
+    expect(reply.content).toContain('Analyse du dossier de septembre');
+    const actions = reply.result.actions;
+    // Clôture refusée (entreprise sans IF) : seules trois propositions sont retenues.
+    expect(actions.map((a: any) => a.type)).toEqual(['valider_lignes', 'exporter', 'creer_snapshot']);
+    const valid = invoices.filter((f: any) => f.statut === 'validee' && !f.doublonDe && !f.revueHumaine).map((f: any) => f.id);
+    expect(actions[0].factureIds.sort()).toEqual(valid.sort());
+    expect(actions[1]).toEqual(expect.objectContaining({ format: 'json', mois: MONTH, scope: 'all' }));
+    // Exécution telle que le fait l'interface après confirmation.
+    for (const id of actions[0].factureIds) await auth(api().post(`/api/factures/${id}/valider`)).expect(201);
+    const json = await auth(api().get('/api/workspace/export')).query({ month: MONTH, format: 'json', scope: 'all', examples: 'true' }).expect(200);
+    expect(json.headers['content-type']).toContain('application/json');
+    const body = JSON.parse(json.text);
+    expect(body.lignes.length).toBeGreaterThan(0);
+    expect(body.lignes[0]).toEqual(expect.objectContaining({ id: expect.any(Number), mTtc: expect.any(Number), revueHumaine: expect.any(Boolean) }));
+    await auth(api().post('/api/workspace/snapshots')).send({ month: MONTH }).expect(201);
+    const journal = JSON.stringify((await auth(api().get('/api/journal')).expect(200)).body);
+    expect(journal).toContain('validation_humaine');
+    expect(journal).toContain('snapshot_cree');
+  });
+
+  it('cache : une réponse n’est plus réutilisée après un import de dossier', async () => {
+    const ask = async () => {
+      const c = await auth(api().post('/api/workspace/conversations')).send({ month: MONTH }).expect(201);
+      return (await auth(api().post(`/api/workspace/conversations/${c.body.id}/messages`)).send({ text: 'Question stable sur le cache' }).expect(201)).body.data.messages[1];
+    };
+    await ask();
+    expect((await ask()).result.cached).toBeDefined();
+    const { zipSync, strToU8 } = require('fflate');
+    const zip = zipSync({ 'lot/achats.csv': strToU8('FACT_NUM,LIB_FRSS,M_TTC,TAUX,DATE_FAC\nCACHE-1,Cache,120,20%,05/09/2026\n') });
+    const lot = await auth(api().post('/api/workspace/imports/zip')).attach('file', Buffer.from(zip), 'lot.zip').expect(201);
+    for (let i = 0; i < 100; i++) {
+      if ((await auth(api().get('/api/workspace/imports/' + lot.body.id)).expect(200)).body.data.status === 'termine') break;
+      await new Promise(r => setTimeout(r, 25));
+    }
+    expect((await ask()).result.cached).toBeUndefined();
+  });
+
+  it('formats d’entrée : WebP lu par l’IA, HEIC refusé avec la conversion à faire', async () => {
+    const webp = await auth(api().post('/api/workspace/documents')).attach('file', Buffer.concat([PNG, Buffer.from('webp')]), 'photo-facture.webp').expect(201);
+    expect(webp.body.data.mode).toBe('ia_live');
+    const extraction = calls[calls.length - 1];
+    expect(JSON.stringify(extraction.messages)).toContain('image/webp');
+    const heic = await auth(api().post('/api/workspace/documents')).attach('file', PNG, 'IMG_0001.HEIC').expect(400);
+    expect(heic.body.message).toContain('JPG');
+    const docx = await auth(api().post('/api/workspace/documents')).attach('file', PNG, 'facture.docx').expect(400);
+    expect(docx.body.message).toContain('PDF');
   });
 
   it('extrait une pièce en mode connecté ; montants dérivés recalculés par le serveur', async () => {

@@ -12,6 +12,7 @@ import { allowedGoogleEmail, localBaseUrl, onlineProfile, profile } from '../com
 import { writeEnv } from '../ia/ia-config';
 import { backupData } from './backup';
 import { archivePdf } from './archive-pdf';
+import { ACCEPTED as IMPORTABLE, unsupportedReason } from './archive-import';
 
 const hash = (v: string | Buffer) => createHash('sha256').update(v).digest('hex');
 const now = () => new Date().toISOString();
@@ -21,7 +22,6 @@ const FOLDER = 'application/vnd.google-apps.folder';
 const SCOPES = 'openid email https://www.googleapis.com/auth/drive.file';
 /** Lecture des dossiers remis par le comptable (import par lien) : demandée seulement à la première utilisation. */
 const READONLY = 'https://www.googleapis.com/auth/drive.readonly';
-const IMPORTABLE = ['.pdf', '.png', '.jpg', '.jpeg', '.xlsx', '.xls', '.csv', '.json'];
 const GOOGLE_EXPORT: Record<string, [string, string]> = {
   'application/vnd.google-apps.spreadsheet': ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'],
   'application/vnd.google-apps.document': ['application/pdf', '.pdf'],
@@ -261,7 +261,7 @@ export class IntegrationsService implements OnModuleInit, OnModuleDestroy {
       const mime = f.shortcutDetails?.targetMimeType || f.mimeType;
       const fileId = f.shortcutDetails?.targetId || f.id;
       const ext = GOOGLE_EXPORT[mime]?.[1] || (/\.[^./]+$/.exec(f.name)?.[0] || '').toLowerCase();
-      if (!IMPORTABLE.includes(ext)) return skipped.push({ name: path, reason: 'Format non pris en charge' });
+      if (!IMPORTABLE.includes(ext)) return skipped.push({ name: path, reason: unsupportedReason(ext) });
       if (Number(f.size || 0) > 20 * 1024 * 1024) return skipped.push({ name: path, reason: 'Fichier supérieur à 20 Mo' });
       files.push({ id: fileId, name: f.name, path: GOOGLE_EXPORT[mime] && !path.toLowerCase().endsWith(ext) ? path + ext : path, mimeType: mime, size: Number(f.size || 0) });
     };

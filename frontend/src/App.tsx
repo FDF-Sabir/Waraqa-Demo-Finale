@@ -1602,14 +1602,14 @@ function Imports({
         >
           <Icon name="upload" size={36} />
           <h2>Glissez vos pièces ici</h2>
-          <p>PDF, JPG, PNG, Excel, CSV, JSON · ou un dossier compressé .zip · 20 Mo par pièce</p>
+          <p>PDF, JPG, PNG, GIF, WEBP, Excel, CSV, JSON · ou un dossier compressé .zip · 20 Mo par pièce</p>
           <label className="primary u-file-label">
             Choisir des fichiers
             <input
               aria-label="Choisir des fichiers"
               type="file"
               multiple
-              accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls,.csv,.json,.zip"
+              accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.xlsx,.xls,.csv,.json,.zip"
               disabled={working}
               onChange={(e) => {
                 // Liste lue avant la remise à zéro du champ : la mise à jour d'état peut être différée.

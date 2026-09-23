@@ -8,6 +8,7 @@ import { UnifiedService } from "./unified.service";
 import { FacturesModule } from "../factures/factures.module";
 import { JournalModule } from "../journal/journal.module";
 import { OcrModule } from "../ocr/ocr.module";
+import { NotificationsModule } from "../notifications/notifications.module";
 import { FactureEntity } from "../factures/facture.entity";
 import { UtilisateurEntity } from "../utilisateurs/utilisateur.entity";
 import { DesignationEntity } from "../designations/designation.entity";
@@ -23,6 +24,7 @@ import { DesignationEntity } from "../designations/designation.entity";
     FacturesModule,
     JournalModule,
     OcrModule,
+    NotificationsModule,
   ],
   controllers: [UnifiedController],
   providers: [UnifiedService, IntegrationsService],

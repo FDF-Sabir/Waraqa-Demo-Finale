@@ -30,7 +30,7 @@ export interface ContenuPrepare {
   texte?: string;
 }
 
-const EXTENSIONS_IMAGE = new Set(['jpg', 'jpeg', 'png']);
+const EXTENSIONS_IMAGE = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp']);
 const EXTENSIONS_TABULAIRE = new Set(['xlsx', 'xls', 'csv']);
 
 function extensionDe(nomFichier: string): string {
@@ -40,6 +40,8 @@ function extensionDe(nomFichier: string): string {
 
 function mimeTypeImage(extension: string): string {
   if (extension === 'png') return 'image/png';
+  if (extension === 'gif') return 'image/gif';
+  if (extension === 'webp') return 'image/webp';
   return 'image/jpeg';
 }
 

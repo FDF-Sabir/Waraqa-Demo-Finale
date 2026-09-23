@@ -4,10 +4,11 @@ import { IaGateway } from "../ocr/ia-gateway";
 import { apiKey, cost, KEY_PATTERN, maskedKey, MODEL_PRESETS, workspaceId, writeEnv } from "../ia/ia-config";
 import { ASSISTANT_RULES, AssistantTools, runAssistant } from "../ia/assistant";
 import { onlineProfile, profile } from "../common/profile";
-import { IntegrationsService } from "./integrations.service";
+import { driveIdFromLink, IntegrationsService } from "./integrations.service";
+import { NotificationsService } from "../notifications/notifications.service";
 import { aliasFor, readSheetRows, toIsoDate } from "./table-import";
 import { construireReleve, releveXlsx, releveXml, ReleveHeader } from "./releve";
-import { extractZip } from "./archive-import";
+import { ACCEPTED, extractZip, unsupportedReason } from "./archive-import";
 import {
   BadRequestException,
   ConflictException,
@@ -167,6 +168,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     private journal: JournalService,
     private ocr: OcrService,
     private drive: IntegrationsService,
+    private notifications: NotificationsService,
   ) {}
   async onModuleInit() {
     await mkdir(this.storage, { recursive: true });
@@ -634,20 +636,11 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
   }
   private async uploadInternal(file: Express.Multer.File, user: any, preview = false, opts: { reuse?: boolean; skipDrive?: boolean; lot?: string } = {}) {
     const ext = extname(file.originalname).toLowerCase();
-    if (
-      ![
-        ".pdf",
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".xlsx",
-        ".xls",
-        ".csv",
-        ".json",
-      ].includes(ext)
-    )
+    if (!ACCEPTED.includes(ext))
       throw new BadRequestException(
-        "Formats acceptés : PDF, JPG, PNG, XLSX, XLS, CSV, JSON.",
+        unsupportedReason(ext) === "Format non pris en charge"
+          ? "Formats acceptés : PDF, JPG, PNG, GIF, WEBP, XLSX, XLS, CSV, JSON (ou un dossier .zip)."
+          : unsupportedReason(ext),
       );
     if (!file.size || file.size > 20 * 1024 * 1024)
       throw new BadRequestException("Fichier vide ou supérieur à 20 Mo.");
@@ -1109,6 +1102,15 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       );
       extension = "csv";
       mime = "text/csv; charset=utf-8";
+    } else if (format === "json") {
+      // Vue déterministe des mêmes lignes que l'Excel : 13 champs Tableau5 + traçabilité.
+      buffer = Buffer.from(JSON.stringify({
+        entreprise: { raisonSociale: settings.company.name, ice: settings.company.ice, identifiantFiscal: settings.company.iff },
+        mois: month, selection: scope === "all" ? "brouillon" : "revue_humaine", genereLe: now(),
+        lignes: rows.map((f) => ({ id: f.id, ...Object.fromEntries(fields.map((k) => [k, (f as any)[k] ?? null])), sousType: f.sousType, statut: f.statut, revueHumaine: f.revueHumaine, periodeFiscale: f.fiscalMonth || null })),
+      }, null, 2));
+      extension = "json";
+      mime = "application/json; charset=utf-8";
     } else throw new BadRequestException("Format invalide.");
     await this.journal.ecrire({
       action: "export_genere",
@@ -1317,7 +1319,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
   private async answerCacheKey(month: string, text: string, settings: any) {
     const invoices = await this.invoices.createQueryBuilder("f").select("COUNT(*)", "n").addSelect("MAX(f.modifieLe)", "m").addSelect("SUM(f.version)", "v").getRawOne();
     const records = await this.records.createQueryBuilder("r").select("COUNT(*)", "n").addSelect("MAX(r.updatedAt)", "m")
-      .where("r.kind IN (:...kinds)", { kinds: ["document", "allocation", "settings"] }).getRawOne();
+      .where("r.kind IN (:...kinds)", { kinds: ["document", "allocation", "settings", "import_lot", "releve_cloture", "snapshot"] }).getRawOne();
     const fingerprint = JSON.stringify({
       invoices, records, month,
       q: text.trim().toLowerCase().replace(/\s+/g, " "),
@@ -1325,8 +1327,29 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     });
     return "ia-cache-" + createHash("sha256").update(fingerprint).digest("hex");
   }
-  private assistantHost() {
+  /** Contenu lisible d'une pièce importée, pour l'outil lire_piece de l'assistant. */
+  private async readDocumentForAssistant(id: string) {
+    const doc = await this.records.findOneBy({ id, kind: "document" });
+    if (!doc) return null;
+    const lines = (await this.invoices.findBy({ documentId: id })).map((f) => `#${f.id} ${f.factNum || "sans n°"} · ${f.libFrss || "?"} · TTC ${f.mTtc} · taux ${f.taux}`);
+    let texte = "";
+    try {
+      const { preparerContenu } = await import("../ocr/preparation-contenu");
+      const file = await this.documentFile(id);
+      const prepared = await preparerContenu(file.buffer, file.name);
+      texte = prepared.type === "texte" ? String(prepared.texte || "").slice(0, 30000)
+        : "Pièce image ou PDF scanné : contenu non textuel. Pour la relire visuellement, l’utilisateur peut la joindre au message.";
+    } catch { texte = "Fichier original illisible."; }
+    return { nom: doc.data.name, statut: doc.data.status, type: doc.data.ext, texte: texte + (lines.length ? "\n\nLignes créées depuis cette pièce :\n" + lines.join("\n") : "\n\nAucune ligne créée depuis cette pièce.") };
+  }
+  private assistantHost(userId?: number, isAdmin = false) {
     return {
+      isAdmin,
+      designations: () => this.designations.find({ order: { id: "ASC" } }) as any,
+      notifications: () => (userId ? this.notifications.lister(userId) : Promise.resolve([])),
+      readDocument: (id: string) => this.readDocumentForAssistant(id),
+      company: async () => (await this.settings()).company,
+      driveId: (url: string) => driveIdFromLink(url),
       summary: (m: string) => this.summary(m),
       searchInvoices: (m: string, q?: string, f?: string, p?: number, n?: number, sort?: string) => this.searchInvoices(m, q, f, p, n, sort),
       reconcileCandidates: (m: string) => this.reconcileCandidates(m),
@@ -1377,7 +1400,8 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       }
       last.content = blocks;
     }
-    const tools = new AssistantTools(this.assistantHost() as any, c.data.month);
+    const owner = await this.users.findOneBy({ id: c.data.userId });
+    const tools = new AssistantTools(this.assistantHost(c.data.userId, owner?.role === "admin") as any, c.data.month);
     const usage = { calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 };
     const today = new Intl.DateTimeFormat("fr-FR", { timeZone: settings.integrations.timeZone || "Africa/Casablanca", dateStyle: "full" }).format(new Date());
     this.chatProgress.set(id, []);

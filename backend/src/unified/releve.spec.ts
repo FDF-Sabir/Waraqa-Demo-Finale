@@ -123,7 +123,7 @@ describe('Import de tableaux et d’archives', () => {
     const zip = zipSync({ 'a/f.pdf': strToU8('%PDF'), 'a/b.zip': zipSync({ 'c.csv': strToU8('x') }), 'a/n.docx': strToU8('d'), '__MACOSX/a/._f.pdf': strToU8('m'), 'a/vide.json': new Uint8Array() });
     const r = extractZip(Buffer.from(zip));
     expect(r.entries.map(e => e.name)).toEqual(['a/b/c.csv', 'a/f.pdf']);
-    expect(r.skipped).toEqual([{ name: 'a/n.docx', reason: 'Format non pris en charge' }, { name: 'a/vide.json', reason: 'Fichier vide' }]);
+    expect(r.skipped).toEqual([{ name: 'a/n.docx', reason: 'Document Word non pris en charge : enregistrez-le en PDF.' }, { name: 'a/vide.json', reason: 'Fichier vide' }]);
     expect(() => extractZip(Buffer.from('pas un zip'))).toThrow('Archive ZIP illisible');
   });
 });

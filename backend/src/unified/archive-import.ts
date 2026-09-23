@@ -6,7 +6,17 @@ import { extname } from 'path';
  * une pièce importée. Dossiers imbriqués conservés dans le nom (« Juillet/Banque/avis.pdf »),
  * ZIP inclus dépliés sur un niveau, fichiers système ignorés, volumes plafonnés.
  */
-export const ACCEPTED = ['.pdf', '.png', '.jpg', '.jpeg', '.xlsx', '.xls', '.csv', '.json'];
+export const ACCEPTED = ['.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.xlsx', '.xls', '.csv', '.json'];
+
+/** Motif précis pour un format refusé, avec la conversion à faire. */
+export function unsupportedReason(ext: string) {
+  const e = ext.toLowerCase();
+  if (['.heic', '.heif'].includes(e)) return 'Photo HEIC (iPhone) non prise en charge : exportez-la en JPG (Réglages → Appareil photo → Formats → « Le plus compatible »).';
+  if (['.tif', '.tiff'].includes(e)) return 'TIFF non pris en charge : convertissez en PDF ou JPG.';
+  if (['.doc', '.docx', '.odt', '.rtf'].includes(e)) return 'Document Word non pris en charge : enregistrez-le en PDF.';
+  if (['.eml', '.msg'].includes(e)) return 'E-mail non pris en charge : enregistrez la pièce jointe (PDF, image) et importez-la.';
+  return 'Format non pris en charge';
+}
 export const MAX_FILE = 20 * 1024 * 1024;
 const MAX_TOTAL = 500 * 1024 * 1024;
 const MAX_FILES = 2000;
@@ -28,7 +38,7 @@ export function extractZip(buffer: Buffer, prefix = '', depth = 0): ArchiveResul
       filter: (f) => {
         if (f.name.endsWith('/') || /(^|\/)(__MACOSX|\.DS_Store|Thumbs\.db|desktop\.ini)(\/|$)|(^|\/)\._/.test(f.name)) return false;
         const ext = extname(f.name).toLowerCase();
-        if (!ACCEPTED.includes(ext) && !(ext === '.zip' && depth === 0)) { result.skipped.push({ name: prefix + decodeName(f.name), reason: 'Format non pris en charge' }); return false; }
+        if (!ACCEPTED.includes(ext) && !(ext === '.zip' && depth === 0)) { result.skipped.push({ name: prefix + decodeName(f.name), reason: unsupportedReason(ext) }); return false; }
         if (f.originalSize > (ext === '.zip' ? MAX_TOTAL : MAX_FILE)) { result.skipped.push({ name: prefix + decodeName(f.name), reason: 'Fichier supérieur à 20 Mo' }); return false; }
         total += f.originalSize; count++;
         if (total > MAX_TOTAL) throw new Error('Archive trop volumineuse une fois décompressée (500 Mo maximum).');
