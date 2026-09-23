@@ -20,7 +20,8 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 describe('IA connectée (client simulé)', () => {
   let app: INestApplication, dir: string, token = '', service: UnifiedService;
   const calls: any[] = [];
-  let scenario: 'synthese' | 'action' | 'agent' = 'synthese';
+  let scenario: 'synthese' | 'action' | 'agent' | 'worker' = 'synthese';
+  let workerTarget = 0;
   let actionTarget = 0;
   let agentIds: number[] = [];
   const fake = {
@@ -38,6 +39,12 @@ describe('IA connectée (client simulé)', () => {
         const last = params.messages[params.messages.length - 1];
         const answered = Array.isArray(last.content) && last.content.some((b: any) => b.type === 'tool_result');
         if (!answered) {
+          if (scenario === 'worker') return { stop_reason: 'tool_use', usage, content: [
+            { type: 'tool_use', id: 'w1-' + calls.length, name: 'corriger_ligne', input: { factureId: workerTarget, champs: { iceFrs: '001234567000077', idPaie: 2 }, justification: 'ICE et chèque lus sur la pièce' } },
+            { type: 'tool_use', id: 'w2-' + calls.length, name: 'generer_tableau', input: { format: 'xlsx', mois: MONTH, regrouperPar: 'fournisseur', titre: 'Achats par fournisseur' } },
+            { type: 'tool_use', id: 'w3-' + calls.length, name: 'generer_fichier', input: { format: 'json', scope: 'all' } },
+            { type: 'tool_use', id: 'w4-' + calls.length, name: 'corriger_ligne', input: { factureId: workerTarget, champs: { mHt: 1 }, justification: 'essai interdit' } },
+          ] };
           if (scenario === 'agent') return { stop_reason: 'tool_use', usage, content: [
             { type: 'text', text: 'Analyse du dossier de septembre : lignes complètes à valider, export et snapshot demandés. ' + 'Détail des contrôles effectués sur chaque ligne avant proposition. '.repeat(3) },
             { type: 'tool_use', id: 'a1-' + calls.length, name: 'proposer_action', input: { type: 'valider_lignes', factureIds: agentIds, libelle: 'Valider les lignes conformes' } },
@@ -207,6 +214,66 @@ describe('IA connectée (client simulé)', () => {
     const docx = await auth(api().post('/api/workspace/documents')).attach('file', PNG, 'facture.docx').expect(400);
     expect(docx.body.message).toContain('PDF');
   });
+
+  it('agent qui travaille : corrige (avant/après tracés), produit tableau et fichier, jamais mis en cache', async () => {
+    const invoices = (await auth(api().get('/api/factures?mois=' + MONTH)).expect(200)).body;
+    const target = invoices.find((f: any) => f.factNum === 'DEMO-INC-003');
+    workerTarget = target.id;
+    scenario = 'worker';
+    const cacheBefore = (await service.list('ia_cache')).length;
+    const c = await auth(api().post('/api/workspace/conversations')).send({ month: MONTH }).expect(201);
+    const r = await auth(api().post(`/api/workspace/conversations/${c.body.id}/messages`)).send({ text: 'Corrige la ligne incomplète et donne-moi un Excel par fournisseur et le JSON' }).expect(201);
+    scenario = 'synthese';
+    const reply = r.body.data.messages[1];
+    expect(reply.result.executees.map((e: any) => e.outil)).toEqual(['corriger_ligne', 'generer_tableau', 'generer_fichier']);
+    expect(reply.result.sources.find((s: any) => s.summary.includes('refusés : mHt'))).toBeTruthy();
+    const line = (await auth(api().get('/api/factures/' + target.id)).expect(200)).body;
+    expect(line).toEqual(expect.objectContaining({ iceFrs: '001234567000077', idPaie: 2, revueHumaine: false }));
+    const journal = (await auth(api().get('/api/journal')).expect(200)).body;
+    const corr = journal.find((j: any) => j.action === 'correction_agent' && j.factureId === target.id);
+    expect(corr.saisiPar).toBe('Agent IA (pour Admin IA)');
+    expect(JSON.parse(corr.details)).toEqual(expect.objectContaining({ avant: { iceFrs: '001234567000099', idPaie: null }, apres: { iceFrs: '001234567000077', idPaie: 2 }, justification: 'ICE et chèque lus sur la pièce' }));
+    const [tableau, json] = reply.result.livrables;
+    expect(tableau.nom).toBe(`Waraqa-Achats-par-fournisseur-${MONTH}.xlsx`);
+    const xlsx = await auth(api().get('/api/workspace/livrables/' + tableau.id)).buffer(true).parse((res: any, cb: any) => { const b: Buffer[] = []; res.on('data', (x: Buffer) => b.push(x)); res.on('end', () => cb(null, Buffer.concat(b))); }).expect(200);
+    const XLSX = require('xlsx');
+    const wb = XLSX.read(xlsx.body, { type: 'buffer' });
+    expect(wb.SheetNames).toEqual(['Lignes', 'Synthèse', 'Paramètres']);
+    expect(XLSX.utils.sheet_to_json(wb.Sheets['Synthèse'])[0]).toEqual(expect.objectContaining({ Groupe: expect.any(String), TTC: expect.any(Number) }));
+    const j = await auth(api().get('/api/workspace/livrables/' + json.id)).expect(200);
+    expect(JSON.parse(j.text).lignes.length).toBeGreaterThan(0);
+    await auth(api().get('/api/workspace/livrables/livrable-inconnu')).expect(404);
+    expect((await service.list('ia_cache')).length).toBe(cacheBefore);
+    // Même tableau hors discussion (route directe), avec filtre.
+    const direct = await auth(api().post('/api/workspace/tableau')).send({ format: 'csv', mois: MONTH, statut: 'tout', colonnes: ['factNum', 'libFrss', 'mTtc'] }).expect(201);
+    expect(direct.text.split('\r\n')[0]).toContain('N° facture');
+    await auth(api().post('/api/workspace/tableau')).send({ format: 'csv', mois: '2020-01' }).expect(400);
+  });
+
+  it('dossier joint au chat : attente de l’import puis reprise automatique de la demande', async () => {
+    const { zipSync, strToU8 } = require('fflate');
+    const rows = Array.from({ length: 400 }, (_, i) => `REPRISE-${i},Fournisseur ${i % 7},${100 + i},20%,0${1 + (i % 9)}/09/2026`).join('\n');
+    const zip = zipSync({ 'dossier/achats.csv': strToU8('FACT_NUM,LIB_FRSS,M_TTC,TAUX,DATE_FAC\n' + rows + '\n') });
+    const lot = await auth(api().post('/api/workspace/imports/zip')).attach('file', Buffer.from(zip), 'dossier-reprise.zip').expect(201);
+    const c = await auth(api().post('/api/workspace/conversations')).send({ month: MONTH }).expect(201);
+    const first = await auth(api().post(`/api/workspace/conversations/${c.body.id}/messages`)).send({ text: 'Fais la synthèse du dossier', lotIds: [lot.body.id] }).expect(201);
+    expect(first.body.data.messages[1].result.type).toBe('attente_import');
+    expect(first.body.data.pending.lotIds).toEqual([lot.body.id]);
+    let conv: any;
+    for (let i = 0; i < 400; i++) {
+      conv = (await auth(api().get('/api/workspace/conversations/' + c.body.id)).expect(200)).body;
+      if (conv.data.messages.length >= 4) break;
+      await new Promise(r => setTimeout(r, 50));
+    }
+    const [, , auto, resumed] = conv.data.messages;
+    expect(auto).toEqual(expect.objectContaining({ role: 'user', auto: true }));
+    expect(auto.content).toContain('Import terminé');
+    expect(auto.content).toContain('400 ligne(s)');
+    expect(auto.content).toContain('Fais la synthèse du dossier');
+    expect(resumed).toEqual(expect.objectContaining({ role: 'assistant', mode: 'live' }));
+    expect(conv.data.pending).toBeNull();
+    await auth(api().post(`/api/workspace/conversations/${c.body.id}/messages`)).send({ text: 'x', lotIds: 'pas-un-tableau' }).expect(400);
+  }, 60000);
 
   it('extrait une pièce en mode connecté ; montants dérivés recalculés par le serveur', async () => {
     const r = await auth(api().post('/api/workspace/documents')).attach('file', PNG, 'facture-live.png').expect(201);

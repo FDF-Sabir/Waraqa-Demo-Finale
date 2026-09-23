@@ -55,7 +55,7 @@ if (!existsSync(envPath)) {
     appendFileSync(
       envPath,
       (current.endsWith("\n") ? "" : "\n") +
-        "\n# Ajouté automatiquement par la mise à jour Waraqa 4.4\n" +
+        "\n# Ajouté automatiquement par la mise à jour Waraqa 4.5\n" +
         missing.join("\n") +
         "\n",
     );
@@ -129,7 +129,7 @@ async function waitAndOpen() {
     reachable("https://www.googleapis.com"),
   ]);
   const line = (label, value) => console.log(`  ${label.padEnd(16)} ${value}`);
-  console.log(`\nWaraqa 4.4 — ${online ? "profil EN LIGNE (application locale, services en ligne)" : "profil local"}`);
+  console.log(`\nWaraqa 4.5 — ${online ? "profil EN LIGNE (application locale, services en ligne)" : "profil local"}`);
   line("Adresse", url);
   line("Internet", anthropic && google ? "OK" : "indisponible — l’application fonctionne, IA et Drive reprendront au retour du réseau");
   line(

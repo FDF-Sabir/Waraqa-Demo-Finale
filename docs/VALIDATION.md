@@ -1,4 +1,16 @@
-# Validation locale — 23 septembre 2026 (version 4.4.0)
+# Validation locale — 24 septembre 2026 (version 4.5.0)
+
+## Version 4.5.0 — l’agent fait le travail (24/09/2026)
+
+| Commande | Résultat |
+|---|---|
+| `npm test` | **121 unitaires · 100 e2e · 17 parcours intégrés** — 0 échec |
+| `npm run test:ui` | 13 groupes réussis |
+
+Nouveaux tests : outils d’exécution (champs corrigeables, justification, fichiers et tableaux livrés, import Drive noté pour reprise) ; e2e avec Claude simulé — correction tracée avant/après et signée « Agent IA (pour … ) », tableau Excel (Lignes/Synthèse/Paramètres) et JSON livrés, réponse agissante jamais mise en cache, route `POST /tableau` ; ZIP de 400 lignes joint au chat → réponse d’attente → reprise automatique avec bilan de l’import.
+
+Parcours réel dans le navigateur (clé réelle, 0,10 $) : ZIP joint au chat (2 factures PDF dont une à deux taux, une photo, un relevé bancaire CSV) + une seule demande → import et reprise automatique en 16 s → l’agent lit les pièces, **rapproche seul les deux paiements** (dont un réparti sur les deux lignes d’une même facture), produit le tableau par fournisseur et propose « Valider les 6 lignes » + XML SIMPL et Excel DGI → validation confirmée → **XML définitif** téléchargé (4 lignes). Journal : actions signées « Agent IA (pour Comptable Chef) ». Aucune erreur navigateur.
+
 
 ## Version 4.4.0 — agent comptable, relevé de déduction, import de dossiers (23/09/2026)
 

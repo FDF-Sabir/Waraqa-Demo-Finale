@@ -1405,3 +1405,9 @@ pre {
 .u-lot summary span { color: #67786f; font-size: 13px; }
 .u-lot progress { flex: 1 1 160px; height: 8px; accent-color: #186b55; }
 .u-lot .u-task span { min-width: 0; overflow-wrap: anywhere; }
+
+/* Agent : fichiers livrés, attente d'import */
+.u-livrables button { display: inline-flex; align-items: center; gap: 6px; }
+.u-sources ul { margin: 6px 0 0; padding-left: 18px; font-size: 13px; }
+.u-waiting { display: grid; gap: 6px; }
+.u-waiting progress { width: 100%; height: 8px; accent-color: #186b55; }

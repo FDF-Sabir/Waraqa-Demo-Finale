@@ -218,6 +218,40 @@ describe('Assistant comptable connecté (outils en lecture seule)', () => {
     });
   });
 
+  describe('agent : exécution directe', () => {
+    const act = () => ({
+      corriger: jest.fn(async (id: number, champs: any) => `#${id} corrigée (${Object.keys(champs).join(', ')})`),
+      rattacher: jest.fn(async () => 'ok'), rapprocher: jest.fn(async () => 'ok'), snapshot: jest.fn(async () => 'Snapshot créé'),
+      relire: jest.fn(async () => 'relue'), confirmerDesignation: jest.fn(async () => 'ok'), traiterNotification: jest.fn(async () => 'ok'),
+      importerDrive: jest.fn(async () => ({ lotId: 'lot-1', pieces: 12, ignores: 1, nom: 'Juillet' })),
+      fichier: jest.fn(async (format: string, mois: string) => ({ id: 'livrable-1', nom: `Waraqa-${format}-${mois}.${format}`, format, taille: 10 })),
+      tableau: jest.fn(async () => ({ id: 'livrable-2', nom: 'Waraqa-carburant-2026-09.xlsx', format: 'xlsx', taille: 20 })),
+    });
+    it('corrige seulement les champs autorisés, avec justification ; les actions sont tracées', async () => {
+      const a = act();
+      const tools = new AssistantTools({ ...host(rows), act: a } as any, '2026-09');
+      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { mHt: 1 }, justification: 'x pièce' })).content).toContain('refusés : mHt');
+      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { iceFrs: '001' }, justification: '' })).isError).toBe(true);
+      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { iceFrs: '001234567000099' }, justification: 'ICE lu sur la pièce' })).isError).toBeUndefined();
+      expect(a.corriger).toHaveBeenCalledWith(2, { iceFrs: '001234567000099' }, 'ICE lu sur la pièce');
+      expect(tools.executees).toEqual([{ outil: 'corriger_ligne', resume: '#2 corrigée (iceFrs)' }]);
+    });
+    it('fichiers et tableaux livrés ; import Drive noté pour reprise', async () => {
+      const tools = new AssistantTools({ ...host(rows), act: act() } as any, '2026-09');
+      await tools.run('generer_fichier', { format: 'releve-xml' });
+      await tools.run('generer_tableau', { format: 'xlsx', debut: '2026-07', fin: '2026-09', regrouperPar: 'fournisseur' });
+      expect((await tools.run('generer_fichier', { format: 'docx' })).isError).toBe(true);
+      expect((await tools.run('generer_tableau', { format: 'xlsx', debut: '2026-13' })).isError).toBe(true);
+      await tools.run('importer_dossier_drive', { url: 'https://drive.google.com/drive/folders/1AbCdEfGhIjKlMn' });
+      expect(tools.livrables.map(l => l.nom)).toEqual(['Waraqa-releve-xml-2026-09.releve-xml', 'Waraqa-carburant-2026-09.xlsx']);
+      expect(tools.lotsEnCours).toEqual(['lot-1']);
+    });
+    it('sans exécuteur (compte introuvable) : refus propre', async () => {
+      const tools = new AssistantTools(host(rows) as any, '2026-09');
+      expect((await tools.run('creer_snapshot', {})).content).toContain('indisponibles');
+    });
+  });
+
   it('signale honnêtement un bouton annoncé mais jamais proposé', async () => {
     const create = jest.fn(async () => ({ stop_reason: 'end_turn', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text: 'Cliquez sur le bouton ci-dessous pour créer le snapshot.' }] }));
     const r = await runAssistant({

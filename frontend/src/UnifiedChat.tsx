@@ -23,6 +23,9 @@ const SOURCE_LABELS: Record<string, string> = {
   top_fournisseurs: "Fournisseurs", rapprochement: "Rapprochement", pieces: "Pièces", journal: "Journal", proposer_action: "Action",
   releve_deduction: "Relevé de déduction", imports: "Imports", designations: "Désignations", notifications: "Notifications",
   snapshots: "Snapshots", lire_piece: "Pièce", entreprise: "Entreprise",
+  corriger_ligne: "Correction", rattacher_periode: "Rattachement", rapprocher: "Rapprochement", creer_snapshot: "Snapshot",
+  relire_piece: "Relecture", confirmer_designation: "Désignation", traiter_notification: "Notification",
+  importer_dossier_drive: "Import Drive", generer_fichier: "Fichier", generer_tableau: "Tableau",
 };
 
 /** Actions proposées par l'assistant qui modifient les données : confirmation explicite avant exécution. */
@@ -105,6 +108,25 @@ export default function Chat({
     try { setBudget(await api("/workspace/ai")); } catch { setBudget(null); }
   }
   useEffect(() => { loadBudget(); }, [mode]);
+  // Import en cours puis reprise automatique : la discussion se met à jour seule.
+  const last = messages[messages.length - 1];
+  const waiting = Boolean(sameMonth && (active?.data.pending || (last?.role === "user" && last?.auto)));
+  const [pendingLots, setPendingLots] = useState<any[]>([]);
+  useEffect(() => {
+    if (!waiting) { setPendingLots([]); return; }
+    const ids: string[] = active?.data.pending?.lotIds || [];
+    const tick = async () => {
+      setPendingLots((await Promise.all(ids.map((id) => api(`/workspace/imports/${id}`).catch(() => null)))).filter(Boolean));
+      await load().catch(() => undefined);
+    };
+    tick();
+    const timer = setInterval(tick, 3000);
+    return () => clearInterval(timer);
+  }, [waiting, activeId, active?.data.pending?.since]);
+  useEffect(() => {
+    // Réponse reprise arrivée : écrans et budget rafraîchis (lignes importées, fichiers).
+    if (!waiting && last?.role === "assistant" && last?.result?.executees?.length) { refresh(); loadBudget(); }
+  }, [waiting, last?.id]);
   // Progression de l'assistant (outils consultés) pendant la réponse.
   useEffect(() => {
     if (!busy || mode !== "live") { setSteps([]); return; }
@@ -147,6 +169,7 @@ export default function Chat({
       if (!c || c.data.month !== month) c = await create();
       pendingConversation.current = c!.id;
       const documentIds: string[] = [...retryIds];
+      const lotIds: string[] = [];
       let note = "";
       for (const file of pendingFiles) {
         const data = new FormData();
@@ -154,7 +177,8 @@ export default function Chat({
         if (/\.zip$/i.test(file.name)) {
           // Dossier compressé : import en lot en arrière-plan (suivi dans Importer et via l’assistant).
           const lot = await api("/workspace/imports/zip", "POST", data);
-          note += `\n\n[Dossier « ${file.name} » : import de ${lot.data.total} pièce(s) lancé.]`;
+          lotIds.push(lot.id);
+          note += `\n\n[Dossier « ${file.name} » : ${lot.data.total} pièce(s) à importer.]`;
           continue;
         }
         const d = await api("/workspace/documents?reuse=true", "POST", data);
@@ -165,7 +189,7 @@ export default function Chat({
       const updated = await api(
         "/workspace/conversations/" + c!.id + "/messages",
         "POST",
-        { text: question + note, documentIds, ...(noCache ? { noCache: true } : {}) },
+        { text: question + note, documentIds, ...(lotIds.length ? { lotIds } : {}), ...(noCache ? { noCache: true } : {}) },
       );
       setConversations((p) =>
         p.map((x) => (x.id === updated.id ? updated : x)),
@@ -358,11 +382,11 @@ export default function Chat({
             {messages.map((m: any) => (
               <article className={"u-message " + m.role} key={m.id}>
                 <div className="u-message-avatar">
-                  {m.role === "user" ? "Vous" : "و"}
+                  {m.auto ? "↻" : m.role === "user" ? "Vous" : "و"}
                 </div>
                 <div className="u-message-body">
                   <div className="u-message-meta">
-                    <b>{m.role === "user" ? "Vous" : "Waraqa"}</b>
+                    <b>{m.auto ? "Reprise automatique" : m.role === "user" ? "Vous" : "Waraqa"}</b>
                     <span>
                       {m.mode === "demo"
                         ? "Analyse locale · sans IA externe"
@@ -401,6 +425,22 @@ export default function Chat({
                         );
                       })}
                     </div>
+                  )}
+                  {m.result?.livrables?.length > 0 && (
+                    <div className="u-ai-actions u-livrables">
+                      <small>Fichiers produits par l’agent</small>
+                      {m.result.livrables.map((l: any) => (
+                        <button key={l.id} className="primary small" onClick={() => run(() => download(`/workspace/livrables/${l.id}`, l.nom), "Fichier téléchargé")}>
+                          <Icon name="download" size={15} /> {l.nom}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {m.result?.executees?.length > 0 && (
+                    <details className="u-sources" open={m.result.executees.length <= 6}>
+                      <summary>Fait par l’agent ({m.result.executees.length}) — tracé au journal</summary>
+                      <ul>{m.result.executees.map((e: any, i: number) => <li key={i}>{e.resume}</li>)}</ul>
+                    </details>
                   )}
                   {m.result?.sources?.length > 0 && (
                     <details className="u-sources">
@@ -539,6 +579,21 @@ export default function Chat({
                     </button>
                   </span>
                 ))}
+              </div>
+            )}
+            {waiting && (
+              <div className="u-info u-waiting" role="status">
+                {pendingLots.length ? (
+                  pendingLots.map((l: any) => (
+                    <div key={l.id}>
+                      <b>Import « {l.data.label} » : {l.data.processed}/{l.data.total} pièce(s)</b>
+                      <progress max={l.data.total || 1} value={l.data.processed} />
+                    </div>
+                  ))
+                ) : (
+                  <b>L’agent reprend votre demande…</b>
+                )}
+                <small>La demande sera traitée automatiquement à la fin de l’import ; vous pouvez naviguer ailleurs.</small>
               </div>
             )}
             <div className="u-composer">

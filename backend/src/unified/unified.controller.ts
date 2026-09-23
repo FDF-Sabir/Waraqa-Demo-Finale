@@ -220,6 +220,21 @@ export class UnifiedController {
   @Post("imports/zip")
   @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 300 * 1024 * 1024 } }))
   importZip(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any) { return this.service.importZip(f, u); }
+  @UseGuards(JwtAuthGuard) @Get("livrables/:id") async livrable(@Param("id") id: string, @UtilisateurCourant() u: any, @Res() res: Response) {
+    const f = await this.service.livrable(id, u);
+    res.setHeader("Content-Type", f.mime);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`);
+    res.send(f.buffer);
+  }
+  @UseGuards(JwtAuthGuard) @Post("tableau") async tableau(@Body() b: any, @UtilisateurCourant() u: any, @Res() res: Response) {
+    const f = await this.service.customTable(b || {}, u);
+    res.setHeader("Content-Type", f.mime);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(f.name)}`);
+    res.send(f.buffer);
+  }
   @UseGuards(JwtAuthGuard) @Get("releve") releve(@Query("month") m: string, @Query("scope") scope: string, @Query("examples") examples: string) {
     return this.service.releve(month(m), scope, examples === "true");
   }

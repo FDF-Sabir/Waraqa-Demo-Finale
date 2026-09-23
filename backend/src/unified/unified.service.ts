@@ -6,6 +6,9 @@ import { ASSISTANT_RULES, AssistantTools, runAssistant } from "../ia/assistant";
 import { onlineProfile, profile } from "../common/profile";
 import { driveIdFromLink, IntegrationsService } from "./integrations.service";
 import { NotificationsService } from "../notifications/notifications.service";
+import { DesignationsService } from "../designations/designations.service";
+import { ModifierFactureDto } from "../factures/dto/modifier-facture.dto";
+import { CHAMPS_CORRIGEABLES, COLONNES_TABLEAU, type AgentActions, type Livrable } from "../ia/assistant";
 import { aliasFor, readSheetRows, toIsoDate } from "./table-import";
 import { construireReleve, releveXlsx, releveXml, ReleveHeader } from "./releve";
 import { ACCEPTED, extractZip, unsupportedReason } from "./archive-import";
@@ -169,6 +172,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     private ocr: OcrService,
     private drive: IntegrationsService,
     private notifications: NotificationsService,
+    private designationService: DesignationsService,
   ) {}
   async onModuleInit() {
     await mkdir(this.storage, { recursive: true });
@@ -252,12 +256,12 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
   }
   async diagnostics(user: any) {
     await this.admin(user);
-    return { version:'4.4.0', profile:profile(), node:process.version, uptimeSeconds:Math.floor(process.uptime()), memory:process.memoryUsage(), invoices:await this.invoices.count(), documents:await this.records.countBy({kind:'document'}), importing:this.importing, activeChats:this.busyChats.size, apiKeyConfigured:Boolean(apiKey()), iaCallsInFlight: IaGateway.busy };
+    return { version:'4.5.0', profile:profile(), node:process.version, uptimeSeconds:Math.floor(process.uptime()), memory:process.memoryUsage(), invoices:await this.invoices.count(), documents:await this.records.countBy({kind:'document'}), importing:this.importing, activeChats:this.busyChats.size, apiKeyConfigured:Boolean(apiKey()), iaCallsInFlight: IaGateway.busy };
   }
   async status() {
     const settings = await this.settings();
     return {
-      version: "4.4.0",
+      version: "4.5.0",
       configured: Boolean(apiKey()),
       needsSetup: (await this.users.count()) === 0,
       profile: profile(),
@@ -629,6 +633,8 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     lot.finishedAt = now();
     lot.lines = lot.items.reduce((n: number, x: any) => n + x.lines, 0);
     await this.save(id, "import_lot", lot);
+    // Reprise en tâche de fond : l'import suivant n'attend pas la réponse de l'agent.
+    this.resumeConversations(id).catch(() => undefined);
     await this.journal.ecrire({ action: "lot_importe", ...this.actor(user), details: { lot: id, pieces: lot.total, lignes: lot.lines, erreurs: lot.items.filter((x: any) => ["erreur", "partiel"].includes(x.state)).length }, notifiable: true });
   }
   async lots() {
@@ -1121,6 +1127,155 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     await this.drive.enqueueExport(name, buffer, month);
     return { buffer, mime, name };
   }
+  // ─── Agent comptable : exécution directe et fichiers livrés ─────────────────
+  private readonly livrablesDir = resolve(process.env.WARAQA_FILES_PATH || "data/files", "..", "livrables");
+  private async saveLivrable(file: { buffer: Buffer; mime: string; name: string }, userId: number, conversationId?: string): Promise<Livrable> {
+    await mkdir(this.livrablesDir, { recursive: true });
+    const id = "livrable-" + randomUUID();
+    await writeFile(resolve(this.livrablesDir, id), file.buffer, { mode: 0o600 });
+    await this.save(id, "livrable", { name: file.name, mime: file.mime, size: file.buffer.length, createdAt: now(), userId, conversationId: conversationId || null });
+    return { id, nom: file.name, format: extname(file.name).slice(1), taille: file.buffer.length };
+  }
+  async livrable(id: string, user: any) {
+    const r = await this.get(id, "livrable");
+    if (r.data.userId !== user.sub) await this.admin(user);
+    return { buffer: await readFile(resolve(this.livrablesDir, id)), mime: r.data.mime, name: r.data.name };
+  }
+  /** Actions que l'agent exécute lui-même : réversibles, contrôlées par les routes habituelles, tracées « Agent IA (pour …) ». */
+  private agentActions(owner: UtilisateurEntity, conversationId: string): AgentActions {
+    const agent = { sub: owner.id, nom: `Agent IA (pour ${owner.nom})` };
+    return {
+      corriger: async (factureId, champs, justification) => {
+        const f = await this.factures.trouver(factureId);
+        if (f.archivee) throw new BadRequestException(`Ligne #${factureId} archivée.`);
+        if (f.fiscalMonth && (await this.records.findOneBy({ id: "releve-cloture-" + f.fiscalMonth }))) throw new ConflictException(`Ligne #${factureId} déclarée dans un relevé clôturé.`);
+        const dto = plainToInstance(ModifierFactureDto, champs);
+        const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: true });
+        if (errors.length) throw new BadRequestException("Valeur invalide : " + errors.map((e) => e.property).join(", "));
+        const avant = Object.fromEntries(Object.keys(champs).map((k) => [k, (f as any)[k] ?? null]));
+        const apres = await this.factures.modifier(factureId, dto, { utilisateurId: owner.id, saisiPar: agent.nom });
+        await this.journal.ecrire({ action: "correction_agent", factureId, utilisateurId: owner.id, saisiPar: agent.nom, details: { avant, apres: Object.fromEntries(Object.keys(champs).map((k) => [k, (apres as any)[k] ?? null])), justification } });
+        return `#${factureId} corrigée (${Object.keys(champs).join(", ")}) — ${apres.statut === "validee" ? "complète" : "encore incomplète : " + (apres.champsManquants || []).join(", ")}`;
+      },
+      rattacher: async (ids, mois) => {
+        const r = await this.releveAttach(ids, mois, agent);
+        return `${ids.length} ligne(s) rattachée(s) au relevé ${mois} (${r.lignes.length} ligne(s) retenue(s), TVA ${r.totaux.tva.toFixed(2)})`;
+      },
+      rapprocher: async (paymentId, invoiceId, montant) => {
+        const r = await this.reconcile(paymentId, invoiceId, agent, montant);
+        return `Paiement #${paymentId} affecté à la facture #${invoiceId} (reste paiement ${r.remainingPayment.toFixed(2)}, reste facture ${r.remainingInvoice.toFixed(2)})`;
+      },
+      snapshot: async (mois) => { await this.snapshot(mois, agent); return `Snapshot ${mois} créé`; },
+      relire: async (documentId) => {
+        const d = await this.retryExtraction(documentId, agent);
+        return `Pièce « ${d.data.name} » relue : ${d.data.status}, ${d.data.invoiceIds.length} ligne(s)`;
+      },
+      confirmerDesignation: async (id) => { const d = await this.designationService.confirmer(id, owner.id, agent.nom); return `Désignation « ${d.libelle} » confirmée`; },
+      traiterNotification: async (id) => { await this.notifications.marquerTraitee(id, owner.id); return `Notification #${id} traitée`; },
+      importerDrive: async (url) => {
+        const lot = await this.importDriveFolder(url, agent);
+        return { lotId: lot.id, pieces: lot.data.total, ignores: lot.data.skipped.length, nom: lot.data.label };
+      },
+      fichier: async (format, mois, scope) => {
+        let file: { buffer: Buffer; mime: string; name: string };
+        if (["xlsx", "pdf", "csv", "sage", "json"].includes(format)) file = await this.export(mois, format, scope, agent);
+        else if (format.startsWith("releve-")) file = await this.releveExport(mois, format.slice(7), scope, agent);
+        else if (format === "snapshot-pdf") {
+          const snap = (await this.list("snapshot")).filter((x) => x.data.month === mois).sort((a, b) => b.data.createdAt.localeCompare(a.data.createdAt))[0];
+          if (!snap) throw new BadRequestException(`Aucun snapshot pour ${mois} : créez-le d’abord (creer_snapshot).`);
+          file = { buffer: await this.snapshotPdf(snap.id), mime: "application/pdf", name: `Waraqa-snapshot-${mois}.pdf` };
+        } else if (format === "archives-pdf") file = { buffer: await this.archivesPdf(), mime: "application/pdf", name: "Waraqa-archives.pdf" };
+        else if (format === "sauvegarde") file = { buffer: await this.backup(agent), mime: "application/gzip", name: `Waraqa-sauvegarde-${now().slice(0, 10)}.waraqa.gz` };
+        else throw new BadRequestException("Format inconnu.");
+        return this.saveLivrable(file, owner.id, conversationId);
+      },
+      tableau: async (spec) => this.saveLivrable(await this.customTable(spec, agent), owner.id, conversationId),
+    };
+  }
+  /** Tableau sur mesure : filtres, colonnes et regroupement décrits par l'agent, calculs 100 % serveur. */
+  async customTable(spec: any, user: any) {
+    const debut = spec.debut || spec.mois, fin = spec.fin || spec.debut || spec.mois;
+    if (!/^\d{4}-\d{2}$/.test(debut || "") || !/^\d{4}-\d{2}$/.test(fin || "") || debut > fin) throw new BadRequestException("Période : mois, ou début et fin AAAA-MM.");
+    const cols: string[] = Array.isArray(spec.colonnes) && spec.colonnes.length ? spec.colonnes.filter((c: string) => COLONNES_TABLEAU.includes(c)) : ["factNum", "designation", "mHt", "tva", "mTtc", "iff", "libFrss", "iceFrs", "taux", "idPaie", "datePaie", "dateFac"];
+    const text = (v: unknown) => String(v ?? "").toLowerCase();
+    const statut = spec.statut || "tout";
+    const rows = (await this.factures.lister())
+      .filter((f) => !f.demonstration && (spec.inclureBanque || !this.bank(f)))
+      .filter((f) => { const m = (f.datePaie || f.dateFac || "").slice(0, 7); return m >= debut && m <= fin; })
+      .filter((f) => !spec.fournisseur || text(f.libFrss).includes(text(spec.fournisseur)) || text(f.iceFrs).includes(text(spec.fournisseur)))
+      .filter((f) => spec.taux === undefined || Math.abs((f.taux || 0) - Number(spec.taux)) < 1e-9)
+      .filter((f) => !spec.designation || text(f.designation).includes(text(spec.designation)))
+      .filter((f) => statut === "tout" || (statut === "revue" ? f.revueHumaine : statut === "non_revue" ? !f.revueHumaine : f.statut !== "validee"))
+      .sort((a, b) => (a.datePaie || a.dateFac || "").localeCompare(b.datePaie || b.dateFac || "") || a.id - b.id);
+    if (!rows.length) throw new BadRequestException("Aucune ligne ne correspond à ces critères.");
+    if (rows.length > 20000) throw new BadRequestException("Plus de 20 000 lignes : réduisez la période ou ajoutez un filtre.");
+    const LABELS: Record<string, string> = { id: "Ligne", factNum: "N° facture", designation: "Désignation", libFrss: "Fournisseur", iceFrs: "ICE", iff: "IF", mHt: "HT", tva: "TVA", mTtc: "TTC", taux: "Taux", idPaie: "Mode de paiement", datePaie: "Date de paiement", dateFac: "Date de facture", sousType: "Type de pièce", statut: "Statut", revueHumaine: "Revue", periodeDeclaration: "Période de déclaration" };
+    const MODES: Record<number, string> = { 1: "Espèces", 2: "Chèque", 3: "Prélèvement", 4: "Virement", 5: "Effet", 6: "Compensation", 7: "Autre" };
+    const cell = (f: FactureEntity, c: string) => c === "periodeDeclaration" ? f.fiscalMonth || (f.datePaie || f.dateFac || "").slice(0, 7) : c === "revueHumaine" ? (f.revueHumaine ? "oui" : "non") : c === "idPaie" ? MODES[f.idPaie as number] || "" : (f as any)[c] ?? "";
+    const groupKey: Record<string, (f: FactureEntity) => string> = {
+      fournisseur: (f) => f.libFrss || "Non renseigné", taux: (f) => Math.round((f.taux || 0) * 100) + " %", designation: (f) => f.designation || "Non renseignée",
+      mois: (f) => (f.datePaie || f.dateFac || "").slice(0, 7), sousType: (f) => f.sousType, modePaiement: (f) => MODES[f.idPaie as number] || "Non renseigné",
+    };
+    let synthese: { groupe: string; lignes: number; ht: number; tva: number; ttc: number }[] | null = null;
+    if (spec.regrouperPar) {
+      const key = groupKey[spec.regrouperPar];
+      if (!key) throw new BadRequestException("Regroupement inconnu.");
+      const acc = new Map<string, { groupe: string; lignes: number; ht: number; tva: number; ttc: number }>();
+      for (const f of rows) {
+        const g = acc.get(key(f)) || { groupe: key(f), lignes: 0, ht: 0, tva: 0, ttc: 0 };
+        g.lignes++; g.ht += Math.round((f.mHt || 0) * 100); g.tva += Math.round((f.tva || 0) * 100); g.ttc += Math.round((f.mTtc || 0) * 100);
+        acc.set(g.groupe, g);
+      }
+      synthese = [...acc.values()].map((g) => ({ ...g, ht: g.ht / 100, tva: g.tva / 100, ttc: g.ttc / 100 })).sort((a, b) => b.ttc - a.ttc);
+    }
+    const sum = (k: "mHt" | "tva" | "mTtc") => rows.reduce((n, f) => n + Math.round((f[k] || 0) * 100), 0) / 100;
+    const titre = String(spec.titre || "Tableau sur mesure").slice(0, 120);
+    const periode = debut === fin ? debut : `${debut}_${fin}`;
+    const filtres = [spec.fournisseur && `fournisseur « ${spec.fournisseur} »`, spec.taux !== undefined && `taux ${Math.round(Number(spec.taux) * 100)} %`, spec.designation && `désignation « ${spec.designation} »`, statut !== "tout" && `statut ${statut}`, spec.inclureBanque && "banque incluse"].filter(Boolean).join(", ") || "aucun";
+    const slug = titre.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50) || "tableau";
+    const name = `Waraqa-${slug}-${periode}`;
+    const header = cols.map((c) => LABELS[c] || c);
+    let file: { buffer: Buffer; mime: string; name: string };
+    if (spec.format === "xlsx") {
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet([header, ...rows.map((f) => cols.map((c) => cell(f, c))), [], ["Total", ...cols.slice(1).map((c) => (c === "mHt" ? sum("mHt") : c === "tva" ? sum("tva") : c === "mTtc" ? sum("mTtc") : ""))]]);
+      ws["!cols"] = cols.map((c) => ({ wch: c === "libFrss" ? 32 : 16 }));
+      XLSX.utils.book_append_sheet(wb, ws, "Lignes");
+      if (synthese) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Groupe", "Lignes", "HT", "TVA", "TTC"], ...synthese.map((g) => [g.groupe, g.lignes, g.ht, g.tva, g.ttc])]), "Synthèse");
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([["Titre", titre], ["Période", debut === fin ? debut : `${debut} → ${fin}`], ["Filtres", filtres], ["Lignes", rows.length], ["Généré le", now()], ["Calculs", "Montants du serveur (HT/TVA recalculés depuis TTC et taux)."]]), "Paramètres");
+      file = { buffer: XLSX.write(wb, { type: "buffer", bookType: "xlsx" }), mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", name: name + ".xlsx" };
+    } else if (spec.format === "csv") {
+      const lines = [header, ...rows.map((f) => cols.map((c) => cell(f, c)))];
+      if (synthese) lines.push([], ["Groupe", "Lignes", "HT", "TVA", "TTC"], ...synthese.map((g) => [g.groupe, g.lignes, g.ht, g.tva, g.ttc]));
+      file = { buffer: Buffer.from("﻿" + lines.map((r) => r.map((v) => this.csvCell(v)).join(";")).join("\r\n")), mime: "text/csv; charset=utf-8", name: name + ".csv" };
+    } else if (spec.format === "json") {
+      file = { buffer: Buffer.from(JSON.stringify({ titre, periode: { debut, fin }, filtres, lignes: rows.map((f) => Object.fromEntries(cols.map((c) => [c, cell(f, c)]))), synthese, totaux: { lignes: rows.length, ht: sum("mHt"), tva: sum("tva"), ttc: sum("mTtc") } }, null, 2)), mime: "application/json; charset=utf-8", name: name + ".json" };
+    } else if (spec.format === "pdf") {
+      file = { buffer: await archivePdf({ title: titre, createdAt: now(), month: debut === fin ? debut : `${debut} → ${fin}`, company: (await this.settings()).company, author: user.nom, rows, selection: "Filtres : " + filtres, totals: { totalHt: sum("mHt"), totalTva: sum("tva"), totalTtc: sum("mTtc") } }), mime: "application/pdf", name: name + ".pdf" };
+    } else throw new BadRequestException("Format : xlsx, csv, json ou pdf.");
+    await this.journal.ecrire({ action: "tableau_genere", ...this.actor(user), details: { titre, debut, fin, filtres, lignes: rows.length, format: spec.format, regroupement: spec.regrouperPar || null } });
+    await this.drive.enqueueExport(file.name, file.buffer, fin);
+    return file;
+  }
+  /** Reprise automatique d'une demande quand les imports qu'elle attendait sont terminés. */
+  private async resumeConversations(lotId: string, attempt = 0) {
+    for (const c of await this.list("conversation")) {
+      const pending = c.data.pending;
+      if (!pending?.lotIds?.includes(lotId)) continue;
+      const lots = await Promise.all(pending.lotIds.map((id: string) => this.records.findOneBy({ id })));
+      if (lots.some((l) => l && l.data.status === "en_cours")) continue;
+      const owner = await this.users.findOneBy({ id: c.data.userId });
+      if (!owner) continue;
+      if (this.busyChats.has(c.id)) {
+        if (attempt < 120) setTimeout(() => this.resumeConversations(lotId, attempt + 1).catch(() => undefined), 5000).unref?.();
+        continue;
+      }
+      const bilan = lots.filter(Boolean).map((l: any) => `« ${l.data.label} » : ${l.data.processed}/${l.data.total} pièce(s), ${l.data.items.reduce((n: number, x: any) => n + (x.lines || 0), 0)} ligne(s), ${l.data.items.filter((x: any) => ["erreur", "partiel", "a_saisir"].includes(x.state)).length} pièce(s) à reprendre`).join(" ; ");
+      c.data.pending = null;
+      await this.save(c.id, "conversation", c.data);
+      await this.chat(c.id, { text: `[Import terminé — ${bilan}] Poursuis ma demande : « ${pending.text} »` }, { sub: owner.id, nom: owner.nom }, { auto: true }).catch(() => undefined);
+    }
+  }
   // ─── Relevé de déduction (DGI, art. 112 CGI) ─────────────────────────────────
   private async releveHeader(month: string): Promise<ReleveHeader> {
     const c = (await this.settings()).company;
@@ -1401,7 +1556,9 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       last.content = blocks;
     }
     const owner = await this.users.findOneBy({ id: c.data.userId });
-    const tools = new AssistantTools(this.assistantHost(c.data.userId, owner?.role === "admin") as any, c.data.month);
+    const host: any = this.assistantHost(c.data.userId, owner?.role === "admin");
+    if (owner) host.act = this.agentActions(owner, id);
+    const tools = new AssistantTools(host, c.data.month);
     const usage = { calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 };
     const today = new Intl.DateTimeFormat("fr-FR", { timeZone: settings.integrations.timeZone || "Africa/Casablanca", dateStyle: "full" }).format(new Date());
     this.chatProgress.set(id, []);
@@ -1434,11 +1591,15 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     const result = {
       scope: { totalRows: summary.count, documentIds: ids, historyMessages: history.length },
       actions: tools.actions,
+      executees: tools.executees,
+      livrables: tools.livrables,
+      lotsEnCours: tools.lotsEnCours,
       sources: tools.traces.map((t) => ({ name: t.name, summary: t.summary, truncated: t.truncated })),
       truncated: answer.truncated,
       model: settings.ai.model,
     };
-    if (cacheKey && !answer.truncated)
+    // Une réponse qui a agi (actions, fichiers) n'est jamais resservie depuis le cache.
+    if (cacheKey && !answer.truncated && !tools.executees.length && !tools.livrables.length)
       await this.save(cacheKey, "ia_cache", { content, result, createdAt: now(), month: c.data.month, question: text.slice(0, 200) });
     return { ...result, content, usage };
   }
@@ -1480,20 +1641,20 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     this.chatAbort.get(id)?.abort();
     return { ok: true };
   }
-  async chat(id: string, body: any, user: any) {
+  async chat(id: string, body: any, user: any, opts: { auto?: boolean } = {}) {
     if (this.busyChats.has(id))
       throw new ConflictException("Une réponse est déjà en cours.");
     this.busyChats.add(id);
     this.chatAbort.set(id, new AbortController());
     try {
-      return await this.chatInternal(id, body, user);
+      return await this.chatInternal(id, body, user, opts);
     } finally {
       this.busyChats.delete(id);
       this.chatAbort.delete(id);
       this.chatProgress.delete(id);
     }
   }
-  private async chatInternal(id: string, body: any, user: any) {
+  private async chatInternal(id: string, body: any, user: any, opts: { auto?: boolean } = {}) {
     const c = await this.conversation(id, user);
     const text = String(body.text || "").trim();
     if (!text || text.length > 10000)
@@ -1508,12 +1669,17 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     );
     const settings = await this.settings();
     const summary = await this.summary(c.data.month);
+    if (body.lotIds !== undefined && (!Array.isArray(body.lotIds) || body.lotIds.length > 5 || body.lotIds.some((x: any) => typeof x !== "string")))
+      throw new BadRequestException("Imports joints invalides.");
+    const lotIds: string[] = body.lotIds || [];
+    const lotsEnCours = (await Promise.all(lotIds.map((x) => this.get(x, "import_lot")))).filter((l) => l.data.status === "en_cours");
     const message = {
       id: randomUUID(),
       role: "user",
       content: text,
       documentIds: ids,
       timestamp: now(),
+      ...(opts.auto ? { auto: true } : {}),
     };
     c.data.messages.push(message);
     if (c.data.messages.length === 1) c.data.title = text.slice(0, 65);
@@ -1522,11 +1688,19 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       mode = "demo",
       result: any = {};
     try {
-      if (settings.ai.mode === "live" && apiKey()) {
+      if (settings.ai.mode === "live" && apiKey() && lotsEnCours.length) {
+        // Dossier joint encore en cours d'import : la demande sera reprise automatiquement à la fin.
+        mode = "live";
+        const total = lotsEnCours.reduce((n, l) => n + l.data.total, 0);
+        result = { type: "attente_import", lotIds: lotsEnCours.map((l) => l.id) };
+        content = `Import de ${total} pièce(s) en cours (${lotsEnCours.map((l) => "« " + l.data.label + " »").join(", ")}). Je reprends votre demande automatiquement dès la fin de l’import : vous pouvez laisser cette discussion ouverte ou revenir plus tard.`;
+        c.data.pending = { lotIds: result.lotIds, text, since: now() };
+      } else if (settings.ai.mode === "live" && apiKey()) {
         mode = "live";
         result = await this.liveReply(id, c, text, ids, docs, settings, summary, Boolean(body.noCache));
         content = result.content;
         delete result.content;
+        if (result.lotsEnCours?.length) c.data.pending = { lotIds: result.lotsEnCours, text, since: now() };
       } else if (onlineProfile()) {
         // Profil en ligne : jamais de réponse préenregistrée. Tant que la clé manque, on le dit
         // clairement ; le message reste conservé et « Réessayer » fonctionne dès la clé enregistrée.
@@ -1593,6 +1767,8 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     };
     c.data.messages.push(reply);
     await this.save(id, "conversation", c.data);
+    // Import terminé avant l'enregistrement de cette réponse : la reprise est relancée (elle attend la fin de ce tour).
+    for (const lotId of c.data.pending?.lotIds || []) this.resumeConversations(lotId).catch(() => undefined);
     return c;
   }
 }

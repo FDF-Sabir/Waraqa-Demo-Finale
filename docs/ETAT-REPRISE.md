@@ -1,6 +1,14 @@
-# État de reprise — 23 septembre 2026 · version 4.4.0 (agent comptable)
+# État de reprise — 24 septembre 2026 · version 4.5.0 (l’agent fait le travail)
 
-## Ajouté en 4.4.0 (branche `online-drive`)
+## Ajouté en 4.5.0
+
+- Choix de l’utilisateur : **agent + 2 validations**. L’agent exécute lui-même les traitements réversibles (`AgentActions` dans `backend/src/ia/assistant.ts`, implémentées par `UnifiedService.agentActions`) ; seuls « lignes revues », clôture et archivage passent par un bouton confirmé.
+- Fichiers livrés (`livrable`, stockés dans `data/livrables/`, route `GET /api/workspace/livrables/:id`, propriétaire ou administrateur) ; tableau sur mesure `UnifiedService.customTable` (route `POST /api/workspace/tableau`).
+- Reprise automatique après import (`chatInternal` : `lotIds`, `pending` ; `runLot` → `resumeConversations`), message « Reprise automatique » dans le chat, suivi de l’import pendant l’attente.
+- Résultats : 121 unitaires, 100 e2e, 17 parcours, 13 groupes navigateur ; parcours réel ZIP → agent → validation → XML définitif réussi.
+
+
+## Historique — version 4.4.0 (branche `online-drive`)
 
 - **Relevé de déduction DGI** (modèle ADC082F-15I, art. 112 CGI) — `backend/src/unified/releve.ts`, page `frontend/src/Declaration.tsx` : contrôles DGI, lignes écartées avec motif, déductions tardives ≤ 12 mois, XML SIMPL, Excel au modèle officiel (`backend/src/assets/releve-deduction-modele.xlsx`, régénérable par `scripts/build-releve-template.cjs`), PDF, clôture. Guide : `docs/RELEVE-DEDUCTION.md`.
 - **Import de dossiers** : ZIP (`archive-import.ts`) ou lien de dossier Google Drive (`integrations.service.ts::readFolder`, portée `drive.readonly` demandée à la première utilisation), traités en arrière-plan (`startLot`/`runLot`). Lecture tolérante des tableaux (`table-import.ts`). Entrées : PDF, JPG, PNG, GIF, WEBP, XLSX, XLS, CSV, JSON ; HEIC/TIFF/Word/e-mail refusés avec la conversion à faire.

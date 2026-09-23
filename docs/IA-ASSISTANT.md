@@ -1,4 +1,6 @@
-# Waraqa 4.4 — IA connectée (Claude) : agent comptable, coûts, extensions
+# Waraqa 4.5 — IA connectée (Claude) : agent comptable, coûts, extensions
+
+> **4.5 — l’agent fait le travail.** Outils « AGIT » exécutés directement (réversibles, contrôles serveur habituels, journal « Agent IA (pour …) » avec valeurs avant/après) : `corriger_ligne`, `rattacher_periode`, `rapprocher`, `creer_snapshot`, `relire_piece`, `confirmer_designation`, `traiter_notification`, `importer_dossier_drive`, `generer_fichier`, `generer_tableau`. Fichiers livrés en téléchargement direct (`GET /api/workspace/livrables/:id`) ; tableau sur mesure aussi via `POST /api/workspace/tableau`. Dossier joint au chat ou importé par l’agent : réponse d’attente, puis **reprise automatique** de la demande à la fin de l’import. Restent au comptable, par bouton confirmé : `valider_lignes`, `cloturer_releve`, `archiver_ligne`. Une réponse qui a agi n’est jamais resservie depuis le cache. Jusqu’à 25 étapes par réponse.
 
 Ce document décrit ce qui est livré dans la version 4.2.0 et comment ajouter de l’IA ailleurs **sans casser** le principe fondateur du projet :
 
