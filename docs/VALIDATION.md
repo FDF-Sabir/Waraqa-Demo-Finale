@@ -1,6 +1,22 @@
-# Validation locale — 23 septembre 2026
+# Validation locale — 23 septembre 2026 (version 4.2.0)
 
-Cette validation remplace les résultats antérieurs. Environnement : Linux, Node.js 22.23.1. Les données de test et les documents d’exemple sont fictifs ; les tests utilisent des bases temporaires.
+## Version 4.2.0 — IA connectée
+
+Environnement : Linux, Node.js 22.22.2, Chromium Playwright. Base temporaire à chaque exécution, données fictives.
+
+- Compilation NestJS, contrôle TypeScript frontend et build Vite : réussis.
+- **92 tests unitaires** réussis (78 → 92) : passerelle IA (tool_use, reprise sans options refusées, traduction des erreurs, crédit insuffisant sans recopie du texte fournisseur), configuration (coût avec cache, masque, écriture `.env` sans perte des autres lignes), assistant (outils, anomalies, mois invalide, propositions validées et jamais exécutées, boucle outil → réponse, point de cache unique, blocs de réflexion conservés, limite d’étapes, budget bloquant).
+- **78 tests API/e2e** réussis (70 → 78), dont `ia-live.e2e-spec.ts` avec client Anthropic simulé : clé enregistrée depuis les réglages et jamais renvoyée (réponses, réglages, journal), test de connexion comptabilisé, discussion avec outils et consommation, réutilisation d’une réponse identique puis invalidation après modification d’une ligne, propositions d’action, extraction d’une pièce avec HT/TVA recalculés (valeur `mHt` du modèle ignorée), budget bloquant, suppression de clé et retour en démo.
+- **17 parcours intégrés** sur serveur de production : réussis (inchangés).
+- **Navigateur Chromium : 11 groupes réussis** (inchangés, dont 14 formats × 10 pages, zoom 200 %, mobile sans débordement, aucune erreur console).
+- Contrôle visuel du mode connecté avec fournisseur simulé : réglages IA (clé masquée, test, activation), réponse mise en forme (titres, tableau, listes), actions proposées, confirmation de rapprochement exécutée par la route existante, ouverture de la ligne proposée, affichage mobile 375 px sans débordement. Captures : `apercu-chat-ia-connectee.png`, `apercu-reglages-ia.png` (réponses simulées, pas une sortie réelle de Claude).
+- Appel **réel** à l’API Anthropic avec une clé volontairement invalide (`npm run test:ia`) : erreur 401 traduite « Clé IA refusée (clé invalide, expirée ou supprimée) », aucune donnée écrite, clé masquée dans le rapport.
+
+**Non vérifié faute de clé utilisable dans l’environnement de réalisation** : qualité réelle de l’extraction et des réponses de Claude, coût réel, acceptation effective par l’API des options `output_config` (effort, format structuré) et `thinking` adaptatif pour le modèle choisi — une reprise automatique sans ces options est prévue et testée. À exécuter chez vous : `npm run test:ia` (données fictives, plafond 0,30 $), puis essais sur quelques vraies pièces FEM.
+
+## Version 4.1.0-rc.1 (référence précédente)
+
+Environnement : Linux, Node.js 22.23.1. Les données de test et les documents d’exemple sont fictifs ; les tests utilisent des bases temporaires.
 
 ## Résultats
 
@@ -33,6 +49,7 @@ Le contrôle navigateur couvre les dix pages, les réglages, la discussion local
 ```sh
 npm run build
 npm test
+npm run test:ia          # réel, avec votre clé, plafond WARAQA_TEST_BUDGET_USD
 npm run test:ui
 WARAQA_BROWSER=firefox npm run test:ui
 WARAQA_BROWSER=webkit npm run test:ui

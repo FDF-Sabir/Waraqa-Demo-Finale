@@ -1,6 +1,6 @@
 {
   "name": "waraqa-unified-backend",
-  "version": "4.0.0-demo",
+  "version": "4.2.0",
   "description": "",
   "main": "index.js",
   "scripts": {

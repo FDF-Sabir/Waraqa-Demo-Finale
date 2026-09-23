@@ -50,7 +50,7 @@ if (
   process.exit(1);
 }
 console.log(
-  "\nWaraqa — Démo finale unifiée\nOuvrez http://localhost:3000 dans votre navigateur.\nLaissez cette fenêtre ouverte. Ctrl+C pour arrêter.\n",
+  "\nWaraqa 4.2 — espace comptable local\nOuvrez http://localhost:3000 dans votre navigateur.\nIA : Réglages → Assistant IA → coller la clé → Tester la connexion.\nLaissez cette fenêtre ouverte. Ctrl+C pour arrêter.\n",
 );
 const child = spawn(process.execPath, ["dist/main.js"], {
   cwd: backend,

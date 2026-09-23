@@ -832,6 +832,11 @@ export default function App() {
           close={() => setEditing(undefined)}
           onSave={saveInvoice}
           run={run}
+          ask={(text) => {
+            setEditing(undefined);
+            setDraft(text);
+            go("chat");
+          }}
         />
       )}
     </div>
@@ -1142,6 +1147,7 @@ function InvoiceForm({
   close,
   onSave,
   run,
+  ask,
 }: {
   invoice: Invoice | null;
   documentId?: string;
@@ -1150,6 +1156,7 @@ function InvoiceForm({
   close: () => void;
   onSave: (b: any) => Promise<void>;
   run: Run;
+  ask?: (text: string) => void;
 }) {
   const [form, setForm] = useState<any>(
     invoice
@@ -1339,6 +1346,16 @@ function InvoiceForm({
         )}
         {documentId && <p>Cette ligne sera rattachée au document importé.</p>}
         <div className="u-modal-footer">
+          {invoice && ask && (
+            <button
+              type="button"
+              className="u-text-button"
+              title="Ouvre la discussion avec une question préparée sur cette ligne"
+              onClick={() => ask(`Explique les points à vérifier sur la ligne #${invoice.id}${invoice.factNum ? " (" + invoice.factNum + ")" : ""} et ce qu’il faut corriger avant la revue.`)}
+            >
+              Demander à Waraqa
+            </button>
+          )}
           <button type="button" className="secondary" onClick={close}>
             Annuler
           </button>

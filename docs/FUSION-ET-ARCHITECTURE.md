@@ -53,14 +53,13 @@ Toutes les routes sont sous `/api` ; la SPA est servie sur `/`. Les contrats V2 
 
 Les nouvelles routes sont sous `/api/workspace` : `status`, `settings`, `summary`, `seed`, `documents`, `templates`, `users`, `password`, `reconciliation`, `snapshots`, `export`, `conversations`, `invoices/:id/archive`, `invoices/:id/document`. Les conversations sont privées à leur auteur. Les pièces et factures sont partagées dans cet espace local.
 
-## IA
+## IA (4.2)
 
-- Démo : aucune requête Anthropic ; analyses locales de synthèse, anomalies, fournisseurs, paiements et disponibilité des exports. Les réponses en langage libre qui sortent de ces analyses donnent une synthèse et expliquent la limite.
-- Live : SDK Anthropic côté serveur, `messages.create`, historique limité aux 20 derniers messages, contexte limité aux 100 premières lignes du mois et pièces jointes du message courant. Les modèles ne déclenchent aucune mutation métier ; les boutons restent responsables des actions humaines.
-- Les imports PDF/images utilisent le préparateur et le parseur V2 ; seules les données brutes autorisées sont acceptées. Les montants dérivés restent des calculs serveur.
-- Le modèle est configurable. Les erreurs live sont affichées ; aucune substitution silencieuse par une réponse mock.
-
-Documentation consultée pour le branchement : https://platform.claude.com/docs/en/api/typescript et https://platform.claude.com/docs/en/cli-sdks-libraries/sdks/typescript . Aucune clé réelle utilisée pendant la réalisation.
+- Démo : aucune requête Anthropic ; analyses locales déterministes (inchangées).
+- Connecté : assistant Claude avec **outils en lecture seule** (synthèse, lignes paginées, détail, anomalies, fournisseurs, rapprochement, pièces, journal) et **propositions d’action** confirmées par l’utilisateur. Plus de limite silencieuse aux 100 premières lignes. Historique : 20 derniers messages valides, alternance garantie.
+- Extraction des pièces : sortie JSON structurée, champs filtrés, montants dérivés recalculés côté serveur.
+- Clé gérée depuis les réglages (`backend/src/ia/ia-config.ts`), budget mensuel, consommation, cache des réponses et prompt caching.
+- Détails : `docs/IA-ASSISTANT.md`.
 
 ## Bornes actuelles
 

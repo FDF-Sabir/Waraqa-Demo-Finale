@@ -30,7 +30,10 @@ export class IaGateway {
   constructor(apiKey: string, client?: Anthropic) {
     if (!apiKey) throw new ServiceUnavailableException('IA non configurée. Aucune requête externe effectuée.');
     const injected = client || (process.env.NODE_ENV === 'test' && IaGateway.testClientFactory ? IaGateway.testClientFactory() : undefined);
-    this.client = injected || new Anthropic({
+    // Garde-fou : pendant les tests automatisés, aucun appel payant n'est possible, même si une vraie clé traîne dans .env.
+    const blocked = async () => { throw new Error('Appel réseau interdit pendant les tests automatisés.'); };
+    const testGuard = process.env.NODE_ENV === 'test' && !injected ? ({ messages: { create: blocked }, models: { retrieve: blocked } } as any) : undefined;
+    this.client = injected || testGuard || new Anthropic({
       apiKey,
       timeout: Number(process.env.WARAQA_IA_TIMEOUT_MS) || 180_000,
       maxRetries: 2,

@@ -1,6 +1,6 @@
 {
   "name": "waraqa-demo-finale",
-  "version": "4.0.0-demo",
+  "version": "4.2.0",
   "private": true,
   "description": "Nouvelle application unifiée : services V2, interface, chat et démo locale persistante",
   "engines": {
@@ -12,7 +12,8 @@
     "build": "npm run build --prefix backend && npm exec --prefix frontend -- tsc --noEmit -p frontend/tsconfig.json && npm run build --prefix frontend",
     "test": "npm test --prefix backend -- --runInBand && npm run test:e2e --prefix backend -- --runInBand && node scripts/smoke.cjs",
     "test:smoke": "node scripts/smoke.cjs",
-    "test:ui": "node scripts/ui-test.mjs"
+    "test:ui": "node scripts/ui-test.mjs",
+    "test:ia": "node scripts/test-ia-reelle.cjs"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0"

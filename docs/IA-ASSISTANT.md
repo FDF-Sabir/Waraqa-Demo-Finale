@@ -1,0 +1,84 @@
+# Waraqa 4.2 — IA connectée (Claude) : architecture, coûts, extensions
+
+Ce document décrit ce qui est livré dans la version 4.2.0 et comment ajouter de l’IA ailleurs **sans casser** le principe fondateur du projet :
+
+> **L’IA lit et explique. Elle ne calcule pas et ne décide pas.** Les montants dérivés (HT, TVA), les contrôles, les doublons, les rapprochements et les exports restent du code déterministe testé ; toute mutation passe par un clic humain et les règles serveur existantes.
+
+## 1. Activer l’IA (sans toucher à un fichier)
+
+1. **Réglages → Assistant IA** → coller la clé (`sk-ant-…`) → **Enregistrer la clé**.
+   La clé est écrite dans `backend/.env` (droits 600) et appliquée immédiatement. Le navigateur ne la reçoit jamais en retour : seul un masque `sk-ant-…ABCD` est affiché.
+2. **Tester la connexion** : vérifie la clé, l’accès au modèle choisi et le crédit disponible (un appel minimal, moins de 0,01 $).
+3. **Activer le mode connecté**.
+
+Clé créée avec la portée « Organisation » : ouvrir « Clé de portée Organisation ? » et renseigner l’identifiant d’espace de travail, ou recréer la clé dans l’espace **Default** (recommandé).
+
+Crédits : les crédits achetés sur claude.ai (abonnement chat) **ne financent pas** l’API. L’API se recharge dans la Console Claude → *Billing → Add funds*. Un crédit insuffisant est signalé en clair par le test de connexion.
+
+## 2. Ce que fait l’IA dans l’application
+
+| Service | Où | Ce que fait Claude | Ce qui reste déterministe |
+|---|---|---|---|
+| Lecture des pièces (PDF, scans, photos) | Importer des pièces, « Extraire avec IA » | Classe la pièce (6 sous-types) et lit les champs visibles (réf., fournisseur, ICE, IF, TTC, taux, dates, mode de paiement) en **sortie JSON structurée** | HT/TVA calculés par le serveur ; tout champ `mHt`/`tva` renvoyé par le modèle est supprimé ; taux et dates validés ; doublons ; revue humaine obligatoire |
+| Assistant comptable | Discussion IA | Répond en interrogeant **9 outils en lecture seule** : synthèse, recherche de lignes, détail d’une ligne, anomalies, top fournisseurs, rapprochement, pièces, journal, proposition d’action | Chaque chiffre vient d’une requête serveur (mêmes fonctions que les écrans) |
+| Actions proposées | Sous la réponse | Propose jusqu’à 6 boutons : ouvrir une ligne, ouvrir une page, rapprocher un paiement, exporter | Rien n’est exécuté sans clic. Un rapprochement proposé est revalidé (paiement, candidat, montant) puis confirmé dans une fenêtre, et passe par `POST /workspace/reconciliation` avec ses contrôles |
+| Pièces jointes au chat | Discussion IA | Lit la pièce jointe (vision ou texte), la relie aux lignes existantes | La pièce est une **donnée** : ses éventuelles instructions sont ignorées (balises `<piece>` / `<document>`) |
+| « Demander à Waraqa » | Fenêtre d’édition d’une ligne | Prépare une question sur la ligne et ouvre la discussion | — |
+
+L’assistant n’est plus limité aux « 100 premières lignes » de la version précédente : il pagine et filtre côté serveur, et indique ce qu’il a consulté (**Données consultées**) et si un résultat a été tronqué.
+
+## 3. Coûts et cache
+
+### Cache côté fournisseur (prompt caching)
+- Règles + outils de l’assistant et prompt d’extraction sont marqués `cache_control` : relus à **10 % du prix** d’une question à l’autre (durée 5 min, renouvelée à chaque usage).
+- Le dernier bloc de chaque requête est aussi marqué : dans une conversation, l’historique déjà envoyé et les résultats d’outils sont relus depuis le cache à chaque étape.
+
+### Cache des réponses (Waraqa)
+- Première question d’une discussion, sans pièce jointe : si la même question (casse et espaces ignorés) a déjà été posée **et que rien n’a changé** (lignes, versions, pièces, affectations, réglages, modèle, consignes), la réponse est réutilisée **sans appel** (0 $, 7 jours).
+- Le bouton **Régénérer** force une nouvelle réponse. Désactivable dans les réglages.
+
+### Budget et consommation
+- **Budget mensuel** (10 $ par défaut) : au-delà, tout appel est bloqué avec un message clair — y compris au milieu d’une boucle d’outils.
+- Chaque appel est comptabilisé (tokens entrants, sortants, lus/écrits en cache, coût estimé, par fonction). Visible dans Réglages → Assistant IA et dans l’en-tête de la discussion.
+- Tarifs utilisés pour l’estimation (USD par million de tokens, entrée/sortie) : Sonnet 5 2/10, Haiku 4.5 1/5, Opus 5.5 4/20, Fable 5.1 10/50 ; écriture cache ×1,25, lecture ×0,1. Modèle inconnu : tarif le plus élevé.
+
+Ordres de grandeur attendus avec Sonnet 5 (à confirmer par `npm run test:ia`, qui mesure le coût réel) : une question à l’assistant ≈ 0,01 à 0,04 $ ; une pièce extraite ≈ 0,005 à 0,02 $. Pour 150 pièces et quelques dizaines de questions par mois : quelques dollars.
+
+## 4. Choix du modèle
+
+| Modèle | Usage conseillé |
+|---|---|
+| **Claude Sonnet 5** (défaut) | Extraction et assistant au quotidien : meilleur rapport qualité/coût |
+| Claude Haiku 4.5 | Questions simples, volume élevé ; sans réglage de réflexion (l’application retire automatiquement les options non prises en charge) |
+| Claude Opus 5.5 | Audits complexes ponctuels ; environ 2× le coût de Sonnet 5 |
+
+**Niveau de réflexion** : Rapide / Équilibré (défaut) / Approfondi. Un modèle qui refuse une option (réflexion, format structuré) est rappelé une fois sans elle.
+
+## 5. Robustesse et sécurité
+
+- Point de passage unique : `backend/src/ocr/ia-gateway.ts` (concurrence bornée, délai 180 s, 2 reprises SDK sur 429/5xx, annulation).
+- Erreurs traduites sans recopier le texte du fournisseur : clé refusée, modèle introuvable, crédit insuffisant, portée de clé, contexte trop long, quota, surcharge.
+- Tests automatisés : **aucun appel réseau possible** (client bloqué en `NODE_ENV=test`, clé vidée par `test/setup-env.ts`).
+- Conversations privées à leur auteur ; les outils n’exposent que les données de l’espace local, jamais les discussions d’autres utilisateurs.
+- La clé n’apparaît ni dans les réponses API, ni dans le journal, ni dans les rapports de test.
+
+## 6. Ajouter de l’IA ailleurs sans casser la solution
+
+Règles communes, à respecter pour toute nouvelle fonction IA :
+
+1. Passer par `IaGateway` avec `onUsage: (u, m) => this.recordUsage('<fonction>', u, m)` et `beforeCall: () => this.assertBudget()`.
+2. Sortie **structurée** (`output_config.format`) et filtrée par une liste blanche de champs ; jamais de montant dérivé accepté du modèle.
+3. Le résultat est une **proposition** stockée et affichée ; l’application ne l’applique qu’après clic, via une route existante et ses validations.
+4. Un test e2e avec client simulé (`IaGateway.testClientFactory`) et un cas « réponse invalide ».
+
+Extensions prêtes à brancher (par ordre de valeur pour le comptable) :
+
+| Extension | Point d’entrée | Proposition de l’IA | Validation humaine |
+|---|---|---|---|
+| Mapping de colonnes d’un Excel/CSV inconnu | `importPreview` (aperçu d’import) | Correspondance colonnes → 13 champs Tableau5 | L’utilisateur accepte le mapping dans l’écran d’aperçu existant |
+| Désignation proposée | `DesignationsService` | Libellé parmi le référentiel + justification | Confirmation dans l’écran Désignations (flux « en attente » existant) |
+| Relevé bancaire PDF multi-lignes (SGMB, CIH, BMCE) | Import → extraction | Une ligne par mouvement (`releve_bancaire`) | Revue ligne à ligne ; rapprochement proposé puis confirmé |
+| Rapprochement assisté | outil `rapprochement` + `proposer_action` | Paire paiement/facture + justification | Fenêtre de confirmation existante |
+| Synthèse mensuelle rédigée pour la direction | Exports & snapshots | Texte de commentaire du snapshot | Relecture avant export PDF |
+
+Hors périmètre volontaire : dépôt DGI, écriture directe dans Sage, décision fiscale automatique.
