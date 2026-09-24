@@ -545,7 +545,7 @@ export class AssistantTools {
         return {
           summary: `Relevé de déduction ${month} : ${r.lignes.length} ligne(s) retenue(s), ${r.ecartees.length} écartée(s)`,
           data: {
-            mois: month, entete: r.header, entrepriseComplete: r.entrepriseComplete, cloture: r.cloture ? { le: r.cloture.createdAt, par: r.cloture.author } : null,
+            mois: month, entete: r.header, entrepriseComplete: r.entrepriseComplete, cloture: r.cloture ? { le: r.cloture.createdAt, par: r.cloture.author, version: r.cloture.version, empreinteXml: r.cloture.xmlSha256 } : null, versions: r.versions, regles: r.regles?.version,
             totaux: r.totaux, lignesRetenues: r.lignes.slice(0, 40).map((l: any) => ({ id: l.id, ord: l.ord, factNum: l.factNum, libFrss: l.libFrss, mTtc: l.mTtc, tva: l.tva, taux: l.taux, datePaie: l.datePaie })),
             retenuesAffichees: Math.min(40, r.lignes.length), ecarteesParMotif: byCode,
             ecartees: r.ecartees.slice(0, 60).map((e: any) => ({ id: e.ligne.id, factNum: e.ligne.factNum, libFrss: e.ligne.libFrss, mTtc: e.ligne.mTtc, erreurs: e.controles.filter((c: any) => c.niveau === 'erreur').map((c: any) => c.message) })),
@@ -577,7 +577,7 @@ export class AssistantTools {
         const snaps = (await this.host.list('snapshot')).filter(x => !mois || x.data.month === mois)
           .sort((a, b) => String(b.data.createdAt).localeCompare(String(a.data.createdAt)))
           .slice(0, 30).map(x => ({ id: x.id, mois: x.data.month, le: x.data.createdAt, par: x.data.author, totaux: x.data.summary ? { lignes: x.data.summary.count, ht: x.data.summary.totalHt, tva: x.data.summary.totalTva, ttc: x.data.summary.totalTtc } : undefined }));
-        const clotures = (await this.host.list('releve_cloture')).filter(x => !mois || x.data.month === mois).map(x => ({ mois: x.data.month, le: x.data.createdAt, par: x.data.author, lignes: x.data.ids?.length, tva: x.data.totaux?.tva }));
+        const clotures = (await this.host.list('releve_cloture')).filter(x => !mois || x.data.month === mois).map(x => ({ mois: x.data.month, version: x.data.version, le: x.data.createdAt, par: x.data.author, lignes: x.data.ids?.length, tva: x.data.totaux?.tva, empreinteXml: x.data.xmlSha256 }));
         return { summary: `${snaps.length} snapshot(s), ${clotures.length} relevé(s) clôturé(s)`, data: { snapshots: snaps, relevesClotures: clotures } };
       }
       case 'lire_piece': {

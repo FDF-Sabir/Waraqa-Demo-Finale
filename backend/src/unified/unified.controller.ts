@@ -260,7 +260,9 @@ export class UnifiedController {
   @UseGuards(JwtAuthGuard) @Post("releve/attach") releveAttach(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.releveAttach(b?.ids, month(b?.month), u); }
   @UseGuards(JwtAuthGuard) @Post("releve/detach/:id") releveDetach(@Param("id") id: string, @UtilisateurCourant() u: any) { return this.service.releveDetach(Number(id), u); }
   @UseGuards(JwtAuthGuard) @Post("releve/close") releveClose(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.releveClose(month(b?.month), u); }
-  @UseGuards(JwtAuthGuard) @Post("releve/reopen") releveReopen(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.releveReopen(month(b?.month), u); }
+  @UseGuards(JwtAuthGuard) @Post("releve/reopen") releveReopen(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.releveReopen(month(b?.month), u, b?.motif); }
+  @UseGuards(JwtAuthGuard) @Get("releve/versions") releveVersions(@Query("month") m: string) { return this.service.releveVersions(month(m)); }
+  @UseGuards(JwtAuthGuard) @Get("releve/versions/:id") releveVersion(@Param("id") id: string) { return this.service.get(id, "releve_version"); }
   @UseGuards(JwtAuthGuard) @Get("export") async export(
     @Query("month") m: string,
     @Query("format") format: string,

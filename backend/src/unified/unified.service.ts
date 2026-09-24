@@ -11,7 +11,7 @@ import { DesignationsService } from "../designations/designations.service";
 import { ModifierFactureDto } from "../factures/dto/modifier-facture.dto";
 import { CHAMPS_CORRIGEABLES, COLONNES_TABLEAU, type AgentActions, type Livrable } from "../ia/assistant";
 import { aliasFor, readSheetRows, toIsoDate } from "./table-import";
-import { construireReleve, releveXlsx, releveXml, ReleveHeader } from "./releve";
+import { construireReleve, releveXlsx, releveXml, ReleveHeader, TAUX_DEDUCTIBLES, LigneReleve } from "./releve";
 import { ACCEPTED, extractZip, unsupportedReason } from "./archive-import";
 import { classifyDocument, createsLines, DocumentRole, parseRole, ROLE_LABELS } from "./document-role";
 import { describeIndex, readRange, workbookIndex } from "./workbook-reader";
@@ -1333,19 +1333,36 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     const c = (await this.settings()).company;
     return { raisonSociale: String(c.name || "").trim(), identifiantFiscal: String(c.iff || "").trim(), annee: Number(month.slice(0, 4)), periode: Number(month.slice(5, 7)), regime: c.regime === 2 ? 2 : 1 };
   }
+  /** Règles appliquées par le moteur du relevé, versionnées pour être archivées avec chaque clôture. */
+  static readonly REGLES_RELEVE = { version: "releve-dgi-2026.09", modele: "ADC082F-15I", article: "112 CGI", tauxDeductibles: TAUX_DEDUCTIBLES, delaiDeductionMois: 12, especesJourDh: 5000, especesMoisDh: 50000, source: "backend/src/unified/releve.ts", validationMetier: "comportement logiciel ; règles à confirmer par le comptable référent" };
+  /** Versions figées d'une période (clôtures successives), de la plus récente à la plus ancienne. */
+  async releveVersions(month: string) {
+    return (await this.list("releve_version")).filter((v) => v.data.month === month).sort((a, b) => b.data.version - a.data.version)
+      .map((v) => ({ id: v.id, version: v.data.version, createdAt: v.data.createdAt, author: v.data.author, lignes: v.data.lignes.length, tva: v.data.totaux.tva, ecartees: v.data.ecartees.length, empreintes: v.data.empreintes, regles: v.data.regles.version, reouverte: v.data.reouverte || null }));
+  }
   async releve(month: string, scope: string, examples = false) {
     if (!["all", "reviewed"].includes(scope || "reviewed")) throw new BadRequestException("Sélection invalide.");
     const header = await this.releveHeader(month);
     const r = construireReleve(await this.factures.lister(), month, header.regime, (scope || "reviewed") as any, examples);
-    const cloture = (await this.records.findOneBy({ id: "releve-cloture-" + month }))?.data || null;
-    return { header, entrepriseComplete: Boolean(header.raisonSociale) && /^\d{1,10}$/.test(header.identifiantFiscal), cloture, ...r };
+    const cloture = (await this.records.findOneBy({ id: closureId(month) }))?.data || null;
+    return { header, entrepriseComplete: Boolean(header.raisonSociale) && /^\d{1,10}$/.test(header.identifiantFiscal), cloture, versions: await this.releveVersions(month), regles: UnifiedService.REGLES_RELEVE, ...r };
+  }
+  /** Version figée courante d'une période clôturée (en-tête et lignes telles que déclarées), sinon null. */
+  private async releveVersionCourante(month: string): Promise<{ header: ReleveHeader; lignes: LigneReleve[]; totaux: any; version: number; ecartees: any[] } | null> {
+    const cloture = (await this.records.findOneBy({ id: closureId(month) }))?.data;
+    if (!cloture?.versionId) return null;
+    const v = (await this.records.findOneBy({ id: cloture.versionId }))?.data;
+    return v ? { header: v.header, lignes: v.lignes, totaux: v.totaux, version: v.version, ecartees: v.ecartees } : null;
   }
   async releveExport(month: string, format: string, scope: string, user: any, examples = false) {
     if (!["xml", "xlsx", "pdf"].includes(format)) throw new BadRequestException("Format invalide.");
-    const r = await this.releve(month, scope, examples);
-    if (!r.entrepriseComplete) throw new BadRequestException("Renseignez la raison sociale et l’identifiant fiscal (IF) de l’entreprise dans Réglages → Entreprise.");
+    const live = await this.releve(month, scope, examples);
+    // Période clôturée : le fichier définitif provient de la version figée, jamais d'un recalcul (invariant 7).
+    const figee = scope !== "all" && !examples ? await this.releveVersionCourante(month) : null;
+    const r = figee ? { ...live, header: figee.header, lignes: figee.lignes, totaux: figee.totaux, ecartees: figee.ecartees } : live;
+    if (!r.entrepriseComplete && !figee) throw new BadRequestException("Renseignez la raison sociale et l’identifiant fiscal (IF) de l’entreprise dans Réglages → Entreprise.");
     if (!r.lignes.length) throw new BadRequestException(`Aucune ligne conforme à déclarer pour ${month} : ${r.ecartees.length} ligne(s) écartée(s) à corriger ou à revoir.`);
-    const suffix = (scope === "all" ? "-BROUILLON" : "") + (examples ? "-EXEMPLES" : "");
+    const suffix = (scope === "all" ? "-BROUILLON" : "") + (examples ? "-EXEMPLES" : "") + (figee ? `-v${figee.version}` : "");
     let buffer: Buffer, name: string, mime: string;
     if (format === "xml") {
       buffer = Buffer.from(releveXml(r.header, r.lignes), "utf8");
@@ -1354,13 +1371,14 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       buffer = releveXlsx(r.header, r.lignes);
       name = `Releve-deduction-${month}${suffix}.xlsx`; mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     } else {
-      const ids = new Set(r.lignes.map((l) => l.id));
-      const rows = (await this.factures.lister()).filter((f) => ids.has(f.id)).sort((a, b) => r.lignes.findIndex((l) => l.id === a.id) - r.lignes.findIndex((l) => l.id === b.id));
+      const liveRows = figee
+        ? (figee.lignes.map((l) => ({ ...l, statut: "validee", revueHumaine: true, sousType: SousType.FACTURE_FOURNISSEUR })) as unknown as FactureEntity[])
+        : (await this.factures.lister()).filter((f) => r.lignes.some((l) => l.id === f.id)).sort((a, b) => r.lignes.findIndex((l) => l.id === a.id) - r.lignes.findIndex((l) => l.id === b.id));
       const settings = await this.settings();
-      buffer = await archivePdf({ title: "Relevé de déduction — art. 112 CGI", createdAt: now(), month, company: settings.company, author: user.nom, rows, selection: `${r.header.regime === 1 ? "Régime de l’encaissement" : "Régime des débits"} · IF ${r.header.identifiantFiscal} · ${scope === "all" ? "BROUILLON — lignes non revues incluses" : "lignes revues et conformes"}`, totals: { totalHt: r.totaux.mHt, totalTva: r.totaux.tva, totalTtc: r.totaux.mTtc } });
+      buffer = await archivePdf({ title: "Relevé de déduction — art. 112 CGI" + (figee ? ` — version ${figee.version} clôturée` : ""), createdAt: now(), month, company: settings.company, author: user.nom, rows: liveRows, selection: `${r.header.regime === 1 ? "Régime de l’encaissement" : "Régime des débits"} · IF ${r.header.identifiantFiscal} · ${scope === "all" ? "BROUILLON — lignes non revues incluses" : figee ? `version figée n° ${figee.version}` : "lignes revues et conformes"}`, totals: { totalHt: r.totaux.mHt, totalTva: r.totaux.tva, totalTtc: r.totaux.mTtc } });
       name = `Releve-deduction-${month}${suffix}.pdf`; mime = "application/pdf";
     }
-    await this.journal.ecrire({ action: "releve_genere", ...this.actor(user), details: { format, month, scope, lignes: r.lignes.length, ecartees: r.ecartees.length, tva: r.totaux.tva, ids: r.lignes.map((l) => l.id), sha256: createHash("sha256").update(buffer).digest("hex") } });
+    await this.journal.ecrire({ action: "releve_genere", ...this.actor(user), details: { format, month, scope, version: figee?.version || null, lignes: r.lignes.length, ecartees: r.ecartees.length, tva: r.totaux.tva, ids: r.lignes.map((l) => l.id), sha256: createHash("sha256").update(buffer).digest("hex") } });
     await this.drive.enqueueExport(name, buffer, month);
     return { buffer, mime, name };
   }
@@ -1384,25 +1402,43 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     await this.journal.ecrire({ action: "ligne_detachee_periode", factureId: id, ...this.actor(user), details: { avant: f.fiscalMonth || null } });
     return { ok: true };
   }
-  /** Clôture : fige le rattachement des lignes déclarées (elles ne réapparaissent plus en report). */
+  /**
+   * Clôture : crée une VERSION IMMUABLE complète (en-tête, lignes, contrôles, écartées, alertes,
+   * totaux, règles, empreintes XML/XLSX) et fige le rattachement des lignes déclarées. Les exports
+   * définitifs de la période proviennent ensuite de cette version, jamais d'un recalcul.
+   */
   async releveClose(month: string, user: any) {
     await this.admin(user);
-    if ((await this.records.findOneBy({ id: "releve-cloture-" + month }))) throw new ConflictException(`Relevé ${month} déjà clôturé.`);
+    if ((await this.records.findOneBy({ id: closureId(month) }))) throw new ConflictException(`Relevé ${month} déjà clôturé.`);
     const r = await this.releve(month, "reviewed");
     if (!r.entrepriseComplete) throw new BadRequestException("Renseignez la raison sociale et l’IF de l’entreprise avant de clôturer.");
     if (!r.lignes.length) throw new BadRequestException("Aucune ligne conforme à clôturer.");
     for (const l of r.lignes) if (l.fiscalMonth !== month) await this.invoices.update(l.id, { fiscalMonth: month });
-    const xmlHash = createHash("sha256").update(releveXml(r.header, r.lignes)).digest("hex");
-    await this.save("releve-cloture-" + month, "releve_cloture", { month, createdAt: now(), author: user.nom, ids: r.lignes.map((l) => l.id), totaux: r.totaux, ecartees: r.ecartees.length, xmlSha256: xmlHash });
-    await this.journal.ecrire({ action: "releve_cloture", ...this.actor(user), details: { month, lignes: r.lignes.length, tva: r.totaux.tva, xmlSha256: xmlHash } });
+    const lignes = r.lignes.map((l) => ({ ...l, fiscalMonth: month }));
+    const xml = releveXml(r.header, lignes), xlsx = releveXlsx(r.header, lignes);
+    const empreintes = { xml: createHash("sha256").update(xml).digest("hex"), xlsx: createHash("sha256").update(xlsx).digest("hex") };
+    const version = (await this.releveVersions(month)).length + 1;
+    const versionId = `releve-version-${month}-${version}`;
+    const createdAt = now();
+    await this.save(versionId, "releve_version", {
+      month, version, createdAt, author: user.nom, authorId: user.sub, header: r.header, regime: r.header.regime, lignes,
+      ecartees: r.ecartees.map((e) => ({ id: e.ligne.id, factNum: e.ligne.factNum, libFrss: e.ligne.libFrss, mTtc: e.ligne.mTtc, controles: e.controles })),
+      alertes: r.alertes, reportsPossibles: r.reports.length, totaux: r.totaux, regles: UnifiedService.REGLES_RELEVE, empreintes,
+    });
+    await this.save(closureId(month), "releve_cloture", { month, createdAt, author: user.nom, version, versionId, ids: lignes.map((l) => l.id), totaux: r.totaux, ecartees: r.ecartees.length, xmlSha256: empreintes.xml, xlsxSha256: empreintes.xlsx, regles: UnifiedService.REGLES_RELEVE.version });
+    await this.journal.ecrire({ action: "releve_cloture", ...this.actor(user), details: { month, version, versionId, lignes: lignes.length, tva: r.totaux.tva, empreintes, regles: UnifiedService.REGLES_RELEVE.version } });
     return this.releve(month, "reviewed");
   }
-  async releveReopen(month: string, user: any) {
+  /** Réouverture : la version figée est CONSERVÉE (avec motif, auteur, date) ; une nouvelle clôture créera la version suivante. */
+  async releveReopen(month: string, user: any, motif?: unknown) {
     await this.admin(user);
-    const rec = await this.records.findOneBy({ id: "releve-cloture-" + month });
+    const rec = await this.records.findOneBy({ id: closureId(month) });
     if (!rec) throw new NotFoundException("Relevé non clôturé.");
+    const reason = typeof motif === "string" && motif.trim() ? motif.trim().slice(0, 500) : "non précisé";
+    const version = rec.data.versionId ? await this.records.findOneBy({ id: rec.data.versionId }) : null;
+    if (version) { version.data.reouverte = { le: now(), par: user.nom, motif: reason }; await this.save(version.id, "releve_version", version.data); }
     await this.records.delete(rec.id);
-    await this.journal.ecrire({ action: "releve_rouvert", ...this.actor(user), details: { month } });
+    await this.journal.ecrire({ action: "releve_rouvert", ...this.actor(user), details: { month, version: rec.data.version || null, motif: reason } });
     return this.releve(month, "reviewed");
   }
   private csvCell(value: any) {

@@ -1,0 +1,14 @@
+
+> waraqa-unified-backend@4.5.0 test:e2e
+> jest --config ./test/jest-e2e.json --runInBand --testPathPattern=releve-version|releve-lot|closed-period|cockpit
+
+PASS test/releve-version.e2e-spec.ts (5.275 s)
+PASS test/releve-lot.e2e-spec.ts
+PASS test/closed-period.e2e-spec.ts
+PASS test/cockpit.e2e-spec.ts
+
+Test Suites: 4 passed, 4 total
+Tests:       18 passed, 18 total
+Snapshots:   0 total
+Time:        9.623 s, estimated 16 s
+Ran all test suites matching /releve-version|releve-lot|closed-period|cockpit/i.
