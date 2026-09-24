@@ -1,6 +1,7 @@
 import { FactureEntity } from '../factures/facture.entity';
 import { Releve } from './releve';
 import { StatutFacture } from '../common/types';
+import { fiabilite } from './qualite';
 
 /**
  * Précontrôle métier et plan de travail (plan directeur L1.1 et L8.1) : les mêmes raisons de
@@ -87,7 +88,7 @@ export function buildPrecontrole(i: PrecontroleInput) {
   };
 }
 
-export interface EtapePlan { code: string; libelle: string; nombre: number; ids?: number[]; documentIds?: string[]; page: string; invite?: string; etat: 'a_faire' | 'fait' | 'attention' | 'bloque' }
+export interface EtapePlan { code: string; libelle: string; nombre: number; ids?: number[]; documentIds?: string[]; page: string; invite?: string; etat: 'a_faire' | 'fait' | 'attention' | 'bloque'; fiables?: number[]; aExaminer?: number[] }
 
 /** Entonnoir de travail : À classer → À compléter → À contrôler → Prêt pour revue → Relevé → Clôture. */
 export function buildPlan(i: PrecontroleInput) {
@@ -99,6 +100,9 @@ export function buildPlan(i: PrecontroleInput) {
   const incompletes = tax.filter(f => f.statut !== StatutFacture.VALIDEE);
   const aControler = tax.filter(f => f.doublonDe || (f.vigilanceRenforcee && !f.revueHumaine));
   const pretes = tax.filter(f => !f.revueHumaine && f.statut === StatutFacture.VALIDEE && !f.doublonDe);
+  const docById = new Map(docs.map(d => [d.id, d.data]));
+  const fiables = pretes.filter(f => fiabilite(f, f.documentId ? docById.get(f.documentId) : undefined).fiable);
+  const aExaminer = pretes.filter(f => !fiables.includes(f));
   const m = i.month;
   const etapes: EtapePlan[] = [
     { code: 'a_classer', libelle: 'À classer', nombre: aClasser.length, documentIds: aClasser.map(d => d.id).slice(0, 200), page: 'import', etat: aClasser.length ? 'attention' : 'fait',
@@ -108,7 +112,8 @@ export function buildPlan(i: PrecontroleInput) {
     { code: 'a_controler', libelle: 'À contrôler', nombre: aControler.length, ids: aControler.map(f => f.id).slice(0, 200), page: 'releve', etat: aControler.length ? 'attention' : 'fait',
       invite: aControler.length ? `Pour ${m} : explique chaque doublon possible (comparer_doublons) et chaque pièce douanière en vigilance ; propose la décision à prendre sans rien supprimer.` : undefined },
     { code: 'pret_revue', libelle: 'Prêt pour revue', nombre: pretes.length, ids: pretes.map(f => f.id).slice(0, 200), page: 'releve', etat: pretes.length ? 'a_faire' : 'fait',
-      invite: pretes.length ? `Pour ${m} : contrôle les ${pretes.length} ligne(s) complètes non revues (anomalies, cohérence pièce/ligne) et propose-moi le bouton pour marquer revues celles qui sont conformes.` : undefined },
+      fiables: fiables.map(f => f.id).slice(0, 200), aExaminer: aExaminer.map(f => f.id).slice(0, 200),
+      invite: pretes.length ? `Pour ${m} : ${fiables.length} ligne(s) fiables (complètes, pièce structurée ou lecture IA confiante) et ${aExaminer.length} à examiner (qualite_extraction en donne les raisons). Contrôle d’abord les lignes à examiner depuis leurs pièces, puis propose-moi un bouton valider_lignes pour les lignes conformes.` : undefined },
     { code: 'releve', libelle: 'Relevé de déduction', nombre: p.releve.retenues, page: 'declaration', etat: p.pret.definitif ? 'fait' : p.releve.retenues ? 'a_faire' : 'bloque',
       invite: `Pour ${m} : produis le relevé de déduction (precontroler_releve puis releve_deduction), explique chaque ligne écartée par son motif, puis livre le fichier XML SIMPL et l’Excel modèle DGI${p.pret.definitif ? '' : ' en brouillon'}.` },
     { code: 'cloture', libelle: 'Clôture', nombre: p.periode.cloture ? 1 : 0, page: 'declaration', etat: p.periode.cloture ? 'fait' : p.pret.cloture ? 'a_faire' : 'bloque',

@@ -1,0 +1,13 @@
+
+> waraqa-unified-backend@4.6.0 test:e2e
+> jest --config ./test/jest-e2e.json --runInBand --testPathPattern=qualite|cockpit|notifications
+
+PASS test/qualite.e2e-spec.ts (5.404 s)
+PASS test/notifications.e2e-spec.ts
+PASS test/cockpit.e2e-spec.ts
+
+Test Suites: 3 passed, 3 total
+Tests:       11 passed, 11 total
+Snapshots:   0 total
+Time:        8.229 s
+Ran all test suites matching /qualite|cockpit|notifications/i.

@@ -35,6 +35,7 @@ export interface AssistantHost {
   consignes?(): Promise<{ id: string; texte: string; portee: string; fournisseur: string | null; par: string; le: string }[]>;
   duplicates?(id: number): Promise<any>;
   plan?(month: string): Promise<any>;
+  qualite?(month?: string): Promise<any>;
   driveSummary?(): Promise<{ configured: boolean; authorized: boolean; needsReauth: boolean; canRead: boolean; email: string | null }>;
   /** Exécution directe par l'agent (opérations réversibles, tracées « Agent IA (pour …) »). */
   act?: AgentActions;
@@ -175,6 +176,11 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
     name: 'generer_rapport',
     description: 'AGIT : produit un RAPPORT RÉDACTIONNEL libre (analyse, synthèse d’avancement, recommandations, décisions attendues) à partir des résultats d’outils déjà obtenus, livré en Markdown et/ou PDF téléchargeables. Le contenu est du Markdown (titres ##, listes, tableaux) ; il ne contient que des chiffres issus des outils et cite ses sources dans une section « Sources ». Pas pour les relevés ou tableaux de lignes (utiliser generer_fichier / generer_tableau).',
     input_schema: { type: 'object', properties: { titre: { type: 'string' }, contenu: { type: 'string', description: 'Markdown complet du rapport (60 000 caractères max).' }, formats: { type: 'array', items: { type: 'string', enum: ['md', 'pdf', 'html'] }, description: 'Par défaut : md et pdf. html = page lisible dans un navigateur ou copiable dans un traitement de texte (pas de format Word natif).' }, mois: MONTH, statut: { type: 'string', enum: ['brouillon', 'final'] }, sources: { type: 'array', items: { type: 'string' }, description: 'Outils et périmètres consultés.' } }, required: ['titre', 'contenu'], additionalProperties: false },
+  },
+  {
+    name: 'qualite_extraction',
+    description: 'QUALITÉ D’EXTRACTION calculée par le serveur : documents par mode de lecture (IA, fichier structuré, saisie), confiance IA par seuil (85 %) avec les pièces sous le seuil, erreurs d’import normalisées par cause (occurrences), champs manquants par champ, et fiabilité des lignes non revues (fiables / à examiner avec raisons). Sert à prioriser la revue humaine sur les cas douteux et à proposer une validation groupée des lignes fiables après contrôle.',
+    input_schema: { type: 'object', properties: { mois: { type: 'string', description: 'AAAA-MM (optionnel : tout le dossier sinon).' } }, additionalProperties: false },
   },
   {
     name: 'capacites',
@@ -390,6 +396,7 @@ export const ASSISTANT_RULES = `Tu es Waraqa, l’assistant du comptable de l’
 - Imports d’un dossier (ZIP ou lien Google Drive) : appelle imports pour l’avancement et les erreurs par fichier.
 - Rôles documentaires : un classeur historique, un modèle du comptable, un référentiel ou un fichier de vérité terrain est CONSERVÉ comme référence et ne crée aucune ligne ; dis-le. Une raison sociale ou un IF lus dans un tel document ne sont JAMAIS recopiés dans la fiche entreprise : signale la contradiction et laisse le comptable décider.
 - Avant d’écrire qu’une fonction n’existe pas, appelle capacites. Trois réponses différentes : fonction absente, accès manquant (Drive non connecté, droit administrateur, clé IA), erreur technique. Un lien Google Drive vers un FICHIER ou une feuille Google Sheets est pris en charge par importer_drive.
+- Revue : avant de proposer valider_lignes, appelle qualite_extraction et distingue les lignes fiables des lignes à examiner (avec leurs raisons) ; ne présente jamais une lecture IA sous le seuil comme fiable.
 - Couverture : chaque résultat paginé indique total, couvert et reste ; parcours toutes les pages nécessaires ou annonce explicitement la part examinée. Ne présente jamais une analyse partielle comme exhaustive.
 
 ## Tu es un agent : fais le travail
@@ -619,6 +626,11 @@ export class AssistantTools {
         if (!this.host.duplicates) throw new BadRequestException('Comparaison indisponible.');
         const g = await this.host.duplicates(Number(input.id));
         return { summary: `Groupe de doublons de #${input.id} : ${g.membres.length} ligne(s)`, data: g };
+      }
+      case 'qualite_extraction': {
+        if (!this.host.qualite) throw new BadRequestException('Qualité indisponible.');
+        const q = await this.host.qualite(input.mois ? this.month(input.mois) : undefined);
+        return { summary: `Qualité${q.mois ? ' ' + q.mois : ''} : ${q.lignes.fiablesNonRevues} fiable(s), ${q.lignes.aExaminer} à examiner, ${q.erreurs.occurrences} erreur(s) d’import`, data: q };
       }
       case 'capacites': {
         const drive = this.host.driveSummary ? await this.host.driveSummary() : undefined;
@@ -939,7 +951,7 @@ const STEP_LABELS: Record<string, string> = {
   calculer: 'Calcul exact', consignes: 'Lecture des consignes', memoriser_consigne: 'Mémorisation d’une consigne', oublier_consigne: 'Révocation d’une consigne', generer_classeur: 'Production du classeur', rattacher_periode: 'Rattachement au relevé', rapprocher: 'Rapprochement d’un paiement',
   creer_snapshot: 'Création du snapshot', relire_piece: 'Relecture d’une pièce', confirmer_designation: 'Confirmation d’une désignation',
   traiter_notification: 'Traitement d’une notification', importer_drive: 'Import depuis Google Drive', importer_dossier_drive: 'Import depuis Google Drive', generer_fichier: 'Production du fichier',
-  capacites: 'Consultation des capacités', precontroler_releve: 'Précontrôle de la période', plan_de_travail: 'Plan de travail',
+  capacites: 'Consultation des capacités', qualite_extraction: 'Mesure de la qualité d’extraction', precontroler_releve: 'Précontrôle de la période', plan_de_travail: 'Plan de travail',
   generer_tableau: 'Production du tableau', generer_rapport: 'Rédaction du rapport', comparer_doublons: 'Comparaison des doublons',
   lire_piece: 'Lecture d’une pièce', lire_classeur: 'Index du classeur', lire_plage: 'Lecture d’une plage du classeur', entreprise: 'Lecture de l’entreprise',
 };

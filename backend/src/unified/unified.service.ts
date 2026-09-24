@@ -16,6 +16,7 @@ import { ACCEPTED, extractZip, unsupportedReason } from "./archive-import";
 import { classifyDocument, createsLines, DocumentRole, parseRole, ROLE_LABELS } from "./document-role";
 import { describeIndex, readRange, workbookIndex } from "./workbook-reader";
 import { buildPlan, buildPrecontrole } from "./cockpit";
+import { buildQualite } from "./qualite";
 import { markdownPdf } from "./report-pdf";
 import { calculer, classeurLibre, markdownHtml } from "./agent-extras";
 import {
@@ -111,7 +112,7 @@ const defaults = {
     tva: "345520",
     fournisseur: "441100",
   },
-  integrations: { driveFolder: "", driveEnabled: false, autoExport: false, timeZone: "Africa/Casablanca", catchUpDays: 0, driveAutoSync: true, driveDailyBackup: true, driveBackupKeep: 14 },
+  integrations: { driveFolder: "", driveEnabled: false, autoExport: false, timeZone: "Africa/Casablanca", catchUpDays: 0, driveAutoSync: true, driveDailyBackup: true, driveBackupKeep: 14, dailyBrief: true },
 };
 const builtinTemplates = [
   {
@@ -213,6 +214,9 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     this.scheduling = true;
     try {
       const settings = await this.settings();
+      const partsBrief = new Intl.DateTimeFormat('en-CA', { timeZone: settings.integrations.timeZone || 'Africa/Casablanca', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
+      const briefDay = `${partsBrief.find(p => p.type === 'year')!.value}-${partsBrief.find(p => p.type === 'month')!.value}-${partsBrief.find(p => p.type === 'day')!.value}`;
+      if (settings.integrations.dailyBrief !== false && (await this.users.count()) > 0) await this.dailyBrief(briefDay, briefDay.slice(0, 7)).catch(() => undefined);
       if (!settings.integrations.autoExport) return;
       const admins = await this.users.find({
         where: { role: "admin" },
@@ -1830,6 +1834,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       missions: (limit?: number) => (userId ? this.missions(userId, limit) : Promise.resolve([])),
       consignes: () => this.consignes(),
       plan: (m: string) => this.planTravail(m),
+      qualite: (m?: string) => this.qualite(m),
     };
   }
   private async cockpitInput(month: string) {
@@ -1840,6 +1845,21 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
   async precontrole(month: string) { return buildPrecontrole(await this.cockpitInput(month)); }
   /** Plan de travail : entonnoir À classer → À compléter → À contrôler → Prêt pour revue → Relevé → Clôture. */
   async planTravail(month: string) { return buildPlan(await this.cockpitInput(month)); }
+  /** Qualité d'extraction : modes, confiance IA par seuil, erreurs normalisées par cause, fiabilité des lignes. */
+  async qualite(month?: string) {
+    const [documents, rows] = await Promise.all([this.list("document"), month ? this.factures.listerParMois(month) : this.factures.lister()]);
+    return buildQualite({ month, documents, rows, isBank: (f: FactureEntity) => this.bank(f) });
+  }
+  /** Bilan quotidien (plan L7.3) : une notification par jour local, dédupliquée, avec le plan de travail du mois courant. */
+  private async dailyBrief(today: string, month: string) {
+    const id = "brief-" + today;
+    if (await this.records.findOneBy({ id })) return null;
+    const plan = await this.planTravail(month);
+    const bloquants = plan.blocages.filter((b) => b.gravite === "bloquant").length;
+    await this.save(id, "brief", { date: today, month, resume: plan.resume, prochaineEtape: plan.prochaineEtape ? { code: plan.prochaineEtape.code, libelle: plan.prochaineEtape.libelle, nombre: plan.prochaineEtape.nombre } : null, etapes: plan.etapes.map((e) => ({ code: e.code, nombre: e.nombre, etat: e.etat })), bloquants, createdAt: now() });
+    await this.journal.ecrire({ action: "bilan_quotidien", details: { date: today, month, resume: plan.resume, prochaineEtape: plan.prochaineEtape?.libelle || null, bloquants }, notifiable: true });
+    return id;
+  }
   /** Catalogue réel des capacités (outils, propositions, formats, pages, rôles), pour l'interface et l'assistant. */
   async capabilities(user: any) {
     const u = await this.users.findOneBy({ id: user.sub });

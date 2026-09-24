@@ -93,6 +93,7 @@ export function WorkPlan({ month, go, ask, run, refreshKey }: { month: string; g
           <div className={"u-step " + e.etat} key={e.code}>
             <span>{e.libelle}</span>
             <strong>{e.nombre}</strong>
+            {e.code === "pret_revue" && e.nombre > 0 && <small className="u-muted">{e.fiables?.length || 0} fiable(s) · {e.aExaminer?.length || 0} à examiner</small>}
             <Status tone={STEP_TONE[e.etat]}>{STEP_LABEL[e.etat]}</Status>
             <div className="u-actions">
               <button className="secondary small" onClick={() => go(e.page)}>Ouvrir</button>
