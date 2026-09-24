@@ -51,7 +51,7 @@ describe('Précontrôle et plan de travail', () => {
     expect(p.blocages.find((b: any) => b.code === 'lignes_incompletes').ids).toEqual([incomplete]);
     expect(p.blocages.find((b: any) => b.code === 'doublons_non_traites').ids).toEqual([dup]);
     expect(p.pret).toEqual({ brouillon: true, definitif: false, cloture: false });
-    expect(p.releve.ecarteesParMotif.revue).toBe(1);
+    expect(p.releve.ecarteesParMotif.revue).toBe(3); // les trois lignes d'achat sont non revues
   });
   it('plan de travail : entonnoir avec identifiants, états et invites prêtes pour l’assistant', async () => {
     const plan = (await auth(api().get(`/workspace/plan-travail?month=${M}`)).expect(200)).body;
