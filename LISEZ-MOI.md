@@ -1,4 +1,11 @@
-# Waraqa 4.6 — application locale, fonctionnement en ligne
+# Waraqa 4.7 — application locale, fonctionnement en ligne
+
+> **Nouveau en 4.7 — l’agent fait tout ce qu’il annonce, et seulement cela** (analyse des manques : `docs/ANALYSE-DES-MANQUES-4.7.md`) :
+> - Une pièce jointe au chat est **conservée en attente** : l’agent l’analyse, et ne la comptabilise que si vous le demandez (`comptabiliser_piece`).
+> - **Corrections en masse** (jusqu’à 100 lignes, résultat ligne par ligne), **calcul exact** côté serveur, **consignes mémorisées** à votre demande (portée globale ou fournisseur, révocables, rappelées à l’agent), **classeur Excel libre**, rapport en **HTML** en plus du Markdown et du PDF.
+> - **Import durable** : l’archive d’un lot est conservée ; un lot interrompu par un arrêt du serveur **reprend sans rejouer** les pièces traitées ; manifeste d’un ZIP avant tout traitement (rôles prévus, exclusions).
+> - **Qualité d’extraction mesurée** : confiance IA par seuil, erreurs par cause, lignes **fiables / à examiner** pour prioriser la revue ; **bilan quotidien** notifié.
+> - Autorisation Google Drive proposée en un clic quand elle manque, au lieu d’un faux refus de format.
 
 > **Nouveau en 4.6 — l’intelligence comptable pilote le dossier** (plan directeur `00_PLAN_DIRECTEUR_WARAQA_INTELLIGENCE_COMPTABLE.md`, suivi dans `01_CHECKPOINTS_DEVELOPPEMENT.md`) :
 > - **Comprendre avant de comptabiliser** : chaque document reçoit un rôle (pièce comptable, paiement, modèle, historique, référentiel, justificatif annexe, vérité terrain, à classer). Un modèle du comptable, un classeur historique ou un fichier de vérité terrain est conservé et consultable **sans créer aucune ligne** ; une raison sociale différente de la société est signalée et jamais recopiée. Rôle imposable au dépôt, reclassement tracé.

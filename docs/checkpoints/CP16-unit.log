@@ -1,0 +1,34 @@
+
+> waraqa-unified-backend@4.7.0 test
+> jest --runInBand
+
+PASS src/unified/workbook-reader.spec.ts
+PASS src/unified/agent-extras.spec.ts
+PASS src/ia/assistant.spec.ts
+PASS src/unified/integrations.service.spec.ts
+PASS src/ocr/preparation-contenu.spec.ts
+  ● Console
+
+    console.log
+      Warning: Indexing all PDF objects
+
+      at console (../node_modules/pdf-parse/lib/pdf.js/v1.10.100/build/webpack:/src/shared/util.js:276:5)
+
+PASS src/unified/report-pdf.spec.ts
+PASS src/unified/backup.spec.ts
+PASS src/unified/releve.spec.ts
+PASS src/unified/document-role.spec.ts
+PASS src/designations/designations.service.spec.ts
+PASS src/unified/archive-pdf.spec.ts
+PASS src/ocr/ia-gateway.spec.ts
+PASS src/common/types.spec.ts
+PASS src/ocr/extraction-ia-mock.service.spec.ts
+PASS src/common/calculs.spec.ts
+PASS src/auth/totp.spec.ts
+PASS src/ia/ia-config.spec.ts
+
+Test Suites: 17 passed, 17 total
+Tests:       139 passed, 139 total
+Snapshots:   0 total
+Time:        10.36 s, estimated 11 s
+Ran all test suites.

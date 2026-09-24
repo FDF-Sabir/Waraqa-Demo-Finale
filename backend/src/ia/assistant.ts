@@ -435,7 +435,7 @@ export function capabilitiesCatalog(ctx: { isAdmin: boolean; aiLive?: boolean; d
   const lecture = ASSISTANT_TOOLS.filter(t => !/^AGIT/.test(t.description || '') && t.name !== 'proposer_action');
   const d = ctx.drive;
   return {
-    version: '4.6.0',
+    version: '4.7.0',
     resume: `${lecture.length} outils de lecture, ${actions.length} actions exécutables, ${ACTION_TYPES.length} types de propositions confirmables, ${EXPORT_FORMATS.length} formats de fichiers, ${PAGES.length} pages, ${DOCUMENT_ROLES.length} rôles documentaires.`,
     lecture: lecture.map(tool),
     actions: actions.map(tool),

@@ -1,4 +1,13 @@
-# État de reprise — 24 septembre 2026 · version 4.6.0 (intelligence comptable pilotée)
+# État de reprise — 24 septembre 2026 · version 4.7.0 (intelligence comptable pilotée)
+
+## Ajouté en 4.7.0 (checkpoints CP13–CP16)
+
+- Pièce jointe au chat en attente (`a_comptabiliser`, `?staging=true`), `comptabiliserPiece`, route `POST /api/workspace/documents/:id/comptabiliser`.
+- `unified/agent-extras.ts` : `calculer`, `classeurLibre`, `markdownHtml` ; outils `corriger_lignes`, `calculer`, `generer_classeur`, rapport `html`.
+- Consignes mémorisées (`consigne-*`, `GET/POST/DELETE /api/workspace/consignes`), injectées au prompt système.
+- Import durable : `data/lots/<lot>.zip` conservé et sauvegardé, `recoverLots()` au démarrage, `POST /api/workspace/imports/:id/reprendre`, `?dryRun=true` (manifeste), `rolePrevu` par entrée.
+- `unified/qualite.ts` : qualité d’extraction et fiabilité ; `GET /api/workspace/qualite`, outil `qualite_extraction` ; bilan quotidien (`brief-*`, `GET /api/workspace/briefs`, réglage `integrations.dailyBrief`).
+- Analyse des manques restants : `docs/ANALYSE-DES-MANQUES-4.7.md` ; rapport des travaux : `docs/RAPPORT-TRAVAUX-WARAQA-4.7.pdf`.
 
 ## Ajouté en 4.6.0 (branche `claude/charming-knuth-gum8u3`, checkpoints CP01–CP12)
 
