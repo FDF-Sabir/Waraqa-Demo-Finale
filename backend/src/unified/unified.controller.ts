@@ -100,6 +100,8 @@ export class UnifiedController {
   ) {
     return this.service.archive(id, u);
   }
+  @UseGuards(JwtAuthGuard) @Get("invoices/:id/doublon") duplicateGroup(@Param("id", ParseIntPipe) id: number) { return this.service.duplicateGroup(id); }
+  @UseGuards(JwtAuthGuard) @Post("invoices/:id/doublon/lever") leverDoublon(@Param("id", ParseIntPipe) id: number, @Body() b: any, @UtilisateurCourant() u: any) { return this.service.leverDoublon(id, b?.motif, u); }
   @UseGuards(JwtAuthGuard) @Post("invoices/:id/document") link(
     @Param("id", ParseIntPipe) id: number,
     @Body() b: any,

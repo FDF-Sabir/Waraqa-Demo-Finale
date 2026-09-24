@@ -284,3 +284,35 @@ describe('Assistant comptable connecté (outils en lecture seule)', () => {
     expect(create).not.toHaveBeenCalled();
   });
 });
+
+describe('Rapports rédactionnels et doublons (CP08/CP09)', () => {
+  const rows = [
+    row(),
+    row({ id: 2, factNum: 'F-1', doublonDe: 1 }),
+  ];
+  const actWithReport = () => ({
+    corriger: jest.fn(), rattacher: jest.fn(), rapprocher: jest.fn(), snapshot: jest.fn(), relire: jest.fn(), confirmerDesignation: jest.fn(), traiterNotification: jest.fn(), importerDrive: jest.fn(),
+    fichier: jest.fn(), tableau: jest.fn(),
+    rapport: jest.fn(async (spec: any) => (spec.formats || ['md', 'pdf']).map((f: string, i: number) => ({ id: 'livrable-r' + i, nom: `Waraqa-rapport-${spec.titre}.${f}`, format: f, taille: 100 }))),
+  });
+  it('generer_rapport livre Markdown et PDF, avec les outils consultés comme sources par défaut', async () => {
+    const h = { ...host(rows), act: actWithReport() };
+    const tools = new AssistantTools(h as any, '2026-09');
+    await tools.run('synthese_mois', {});
+    const r = JSON.parse((await tools.run('generer_rapport', { titre: 'Bilan', contenu: '## Constat\n\nDeux lignes.' })).content);
+    expect(r.fichiers.map((f: any) => f.nom)).toEqual(['Waraqa-rapport-Bilan.md', 'Waraqa-rapport-Bilan.pdf']);
+    expect(h.act.rapport).toHaveBeenCalledWith(expect.objectContaining({ sources: ['synthese_mois'] }));
+    expect(tools.livrables).toHaveLength(2);
+    expect((await tools.run('generer_rapport', { titre: 'X', contenu: 'court', formats: ['docx'] })).isError).toBe(true);
+  });
+  it('lever_doublon : proposition réservée au comptable, justification obligatoire, ligne réellement marquée', async () => {
+    const tools = new AssistantTools(host(rows) as any, '2026-09');
+    expect((await tools.run('proposer_action', { type: 'lever_doublon', factureId: 2, libelle: 'Ligne distincte' })).isError).toBe(true);
+    expect((await tools.run('proposer_action', { type: 'lever_doublon', factureId: 1, libelle: 'Ligne distincte', justification: 'Deux livraisons distinctes le même jour' })).isError).toBe(true);
+    const ok = await tools.run('proposer_action', { type: 'lever_doublon', factureId: 2, libelle: 'Ligne distincte', justification: 'Deux livraisons distinctes le même jour' });
+    expect(ok.isError).toBeUndefined();
+    expect(tools.actions[0]).toEqual(expect.objectContaining({ type: 'lever_doublon', factureId: 2 }));
+    // Jamais exécuté directement par l'agent : aucun outil « AGIT » ne lève un doublon.
+    expect(ASSISTANT_TOOLS.some(t => /lever_doublon/.test(t.name))).toBe(false);
+  });
+});

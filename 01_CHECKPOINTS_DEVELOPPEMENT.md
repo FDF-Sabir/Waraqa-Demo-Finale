@@ -29,12 +29,12 @@ Demande du 24/09/2026 : appliquer le plan directeur `00_PLAN_DIRECTEUR_WARAQA_IN
 | CP05 — Lecture des gros classeurs | L3.1 | Réalisé | `workbook-reader.ts` (index : feuilles, plages, en-têtes, formules, fusions, noms, mappage XML, identité ; plages ≤ 200 lignes avec total/couvert/reste, formules sans cache et dates signalées), outils `lire_classeur`/`lire_plage`, `lire_piece` paginé, classeur joint au chat = index + aperçu (plus de refus) ; tests `workbook-reader.spec.ts` (4), `workbook-chat.e2e-spec.ts` ; `docs/checkpoints/CP05-tests.log` |
 | CP06 — Précontrôle et plan de travail | L1.1, L8.1 | Réalisé (backend) | `cockpit.ts` : blocages codés avec gravité, identifiants et action qui les lève ; entonnoir 6 étapes avec invites IA ; routes `precontrole` / `plan-travail`, outils `precontroler_releve` / `plan_de_travail` ; `cockpit.e2e-spec.ts` (3) ; interface en CP11 |
 | CP07 — Clôture versionnée | L5.3 | Réalisé | `releve_version` immuable (en-tête, lignes, écartées + contrôles, alertes, totaux, règles versionnées, empreintes XML/XLSX), export définitif depuis la version (`-vN`), réouverture avec motif conservant l'historique, routes `releve/versions` ; `releve-version.e2e-spec.ts` (3) ; `docs/checkpoints/CP07-tests.log` |
-| CP08 — Doublons explicables | L2.4 | À faire | Groupe de comparaison, décision humaine réversible |
-| CP09 — Rapports rédactionnels | L3.4 | À faire | Markdown/PDF téléchargeables depuis le chat |
+| CP08 — Doublons explicables | L2.4 | Réalisé | Groupe de comparaison (critères communs / différences, pièces, décisions possibles) `GET /workspace/invoices/:id/doublon`, outil `comparer_doublons`, décision humaine `lever_doublon` (motif, journal, exemption respectée par la re-détection) ; `doublons-rapport.e2e-spec.ts` |
+| CP09 — Rapports rédactionnels | L3.4 | Réalisé | `report-pdf.ts` (Markdown → PDF paginé, métadonnées, sources et limites), outil `generer_rapport` (md + pdf livrés, tracés) ; `report-pdf.spec.ts`, `assistant.spec.ts`, `doublons-rapport.e2e-spec.ts` ; `docs/checkpoints/CP08-tests.log` |
 | CP10 — Orchestrateur fiable | L4.2, L4.3, L4.4 | À faire | Pagination avec couverture, provenance des corrections, missions persistées, bilan structuré |
 | CP11 — Interface pilotée | L8 | À faire | Cockpit, rôles à l'import, capacités, missions |
 | CP12 — Documentation et recette | L10 | À faire | Suite complète verte, version, manifeste |
 
 ## Prochaine action exacte
 
-CP08 : doublons explicables — outil `comparer_doublons` (groupe, critères, différences), décision humaine `lever_doublon` (route `POST /workspace/invoices/:id/doublon/lever`, motif, journal, réversible par re-détection) ; CP09 : `generer_rapport` (Markdown + PDF livrables).
+CP10 : orchestrateur fiable — provenance obligatoire et `expectedVersion` sur `corriger_ligne`, idempotence des actions répétées dans une réponse, missions persistées (`mission-*`, outil `etat_mission`, route `GET /workspace/missions`), bilan structuré dans la réponse, réservation de budget.

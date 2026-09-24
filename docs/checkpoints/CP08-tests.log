@@ -1,0 +1,13 @@
+
+> waraqa-unified-backend@4.5.0 test:e2e
+> jest --config ./test/jest-e2e.json --runInBand --testPathPattern=doublons-rapport|integrity|ia-live
+
+PASS test/doublons-rapport.e2e-spec.ts (5.558 s)
+PASS test/integrity.e2e-spec.ts
+PASS test/ia-live.e2e-spec.ts (6.576 s)
+
+Test Suites: 3 passed, 3 total
+Tests:       27 passed, 27 total
+Snapshots:   0 total
+Time:        15.427 s
+Ran all test suites matching /doublons-rapport|integrity|ia-live/i.

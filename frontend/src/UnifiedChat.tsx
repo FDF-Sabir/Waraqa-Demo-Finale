@@ -25,11 +25,11 @@ const SOURCE_LABELS: Record<string, string> = {
   snapshots: "Snapshots", precontroler_releve: "Précontrôle", plan_de_travail: "Plan de travail", lire_piece: "Pièce", lire_classeur: "Classeur", lire_plage: "Plage du classeur", entreprise: "Entreprise",
   corriger_ligne: "Correction", rattacher_periode: "Rattachement", rapprocher: "Rapprochement", creer_snapshot: "Snapshot",
   relire_piece: "Relecture", confirmer_designation: "Désignation", traiter_notification: "Notification",
-  importer_dossier_drive: "Import Drive", importer_drive: "Import Drive", capacites: "Capacités", generer_fichier: "Fichier", generer_tableau: "Tableau",
+  importer_dossier_drive: "Import Drive", importer_drive: "Import Drive", capacites: "Capacités", generer_fichier: "Fichier", generer_tableau: "Tableau", generer_rapport: "Rapport", comparer_doublons: "Doublons",
 };
 
 /** Actions proposées par l'assistant qui modifient les données : confirmation explicite avant exécution. */
-const MODIFYING = ["valider_ligne", "valider_lignes", "rattacher_periode", "cloturer_releve", "importer_drive", "creer_snapshot", "confirmer_designation", "traiter_notification", "archiver_ligne"];
+const MODIFYING = ["valider_ligne", "valider_lignes", "rattacher_periode", "cloturer_releve", "importer_drive", "creer_snapshot", "confirmer_designation", "traiter_notification", "archiver_ligne", "lever_doublon"];
 function describeAction(a: any) {
   const list = (ids: number[]) => ids.slice(0, 12).map((id) => "#" + id).join(", ") + (ids.length > 12 ? ` … (${ids.length} au total)` : "");
   switch (a.type) {
@@ -42,6 +42,7 @@ function describeAction(a: any) {
     case "confirmer_designation": return `Confirmer la désignation en attente #${a.designationId}.`;
     case "traiter_notification": return `Marquer la notification #${a.notificationId} comme traitée.`;
     case "archiver_ligne": return `Archiver la ligne #${a.factureId} (restaurable depuis Exports & snapshots).`;
+    case "lever_doublon": return `Confirmer que la ligne #${a.factureId} est une opération distincte : le marquage « doublon » est levé, votre motif est tracé et la ligne repasse à revoir.`;
     default: return a.libelle;
   }
 }
@@ -240,6 +241,7 @@ export default function Chat({
       case "confirmer_designation": await api(`/designations/${a.designationId}/confirmer`, "POST"); break;
       case "traiter_notification": await api(`/notifications/${a.notificationId}/marquer-traitee`, "POST"); break;
       case "archiver_ligne": await api(`/workspace/invoices/${a.factureId}/archive`, "POST"); break;
+      case "lever_doublon": await api(`/workspace/invoices/${a.factureId}/doublon/lever`, "POST", { motif: a.justification || "Ligne distincte confirmée par le comptable" }); break;
     }
     await refresh();
     window.dispatchEvent(new Event("workspace-changed"));

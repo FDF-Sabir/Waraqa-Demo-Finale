@@ -16,6 +16,7 @@ import { ACCEPTED, extractZip, unsupportedReason } from "./archive-import";
 import { classifyDocument, createsLines, DocumentRole, parseRole, ROLE_LABELS } from "./document-role";
 import { describeIndex, readRange, workbookIndex } from "./workbook-reader";
 import { buildPlan, buildPrecontrole } from "./cockpit";
+import { markdownPdf } from "./report-pdf";
 import {
   BadRequestException,
   ConflictException,
@@ -510,6 +511,54 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       ...this.actor(user),
     });
     return { ok: true };
+  }
+  // ─── Doublons explicables (plan L2.4) ───────────────────────────────────────
+  /** Groupe de comparaison d'une ligne : référence, membres, critères communs et différences, décision enregistrée. */
+  async duplicateGroup(id: number) {
+    const f = await this.factures.trouver(id);
+    const all = await this.factures.lister();
+    const refId = f.doublonDe || id;
+    const members = all.filter((x) => x.id === refId || x.doublonDe === refId || x.id === id);
+    const ref = members.find((x) => x.id === refId) || f;
+    const decision = (await this.records.findOneBy({ id: "doublon-decision-" + id }))?.data || null;
+    const docs = await this.list("document");
+    const docName = (d?: string) => (d ? docs.find((x) => x.id === d)?.data.name : undefined);
+    const fields: (keyof FactureEntity)[] = ["factNum", "iceFrs", "iff", "libFrss", "mTtc", "taux", "dateFac", "datePaie", "idPaie", "designation", "documentId"];
+    const compare = (x: FactureEntity) => {
+      const communs: string[] = [], differences: Record<string, { reference: unknown; ligne: unknown }> = {};
+      for (const k of fields) {
+        const a = ref[k] ?? null, b = x[k] ?? null;
+        const same = typeof a === "number" && typeof b === "number" ? Math.abs(a - b) < 0.005 : String(a ?? "").trim().toUpperCase() === String(b ?? "").trim().toUpperCase();
+        if (same) communs.push(k); else differences[k] = { reference: a, ligne: b };
+      }
+      return { communs, differences };
+    };
+    return {
+      ligne: id, reference: refId, decision,
+      criteres: "Doublon métier détecté quand : même N° de facture, même fournisseur (ICE ou IF), même TTC et dates de facture compatibles ; les COMMISSION bancaires sont exemptées.",
+      membres: members.sort((a, b) => a.id - b.id).map((x) => ({
+        id: x.id, estReference: x.id === refId, doublonDe: x.doublonDe || null, factNum: x.factNum, libFrss: x.libFrss, iceFrs: x.iceFrs, iff: x.iff, mTtc: x.mTtc, taux: x.taux, dateFac: x.dateFac, datePaie: x.datePaie, idPaie: x.idPaie, designation: x.designation,
+        revueHumaine: x.revueHumaine, statut: x.statut, creeLe: x.creeLe, piece: docName(x.documentId), documentId: x.documentId || null, ...(x.id === refId ? {} : compare(x)),
+      })),
+      decisionsPossibles: [
+        { code: "ligne_distincte", libelle: "Ligne distincte confirmée (lever le doublon) — décision du comptable, motif requis" },
+        { code: "archiver", libelle: "Archiver la copie (restaurable) — décision du comptable" },
+        { code: "corriger", libelle: "Corriger la ligne mal lue (N°, fournisseur, montant) : la détection est recalculée" },
+      ],
+    };
+  }
+  /** Décision humaine : la ligne est une opération distincte ; le marquage doublon est levé, tracé et n'est plus remis. */
+  async leverDoublon(id: number, motif: unknown, user: any) {
+    if (typeof motif !== "string" || motif.trim().length < 5 || motif.length > 500) throw new BadRequestException("Motif de 5 à 500 caractères requis.");
+    const f = await this.factures.trouver(id);
+    await assertLineOpen(this.invoices.manager, f, "la levée du doublon");
+    if (!f.doublonDe) throw new ConflictException(`La ligne #${id} n’est pas marquée doublon.`);
+    const previous = (await this.records.findOneBy({ id: "doublon-decision-" + id }))?.data;
+    const exclus = Array.from(new Set([...(previous?.exclus || []), f.doublonDe]));
+    await this.save("doublon-decision-" + id, "doublon_decision", { decision: "ligne_distincte", de: f.doublonDe, exclus, motif: motif.trim(), le: now(), par: user.nom, parId: user.sub });
+    await this.invoices.update(id, { doublonDe: null as any, revueHumaine: false });
+    await this.journal.ecrire({ action: "doublon_leve", factureId: id, ...this.actor(user), details: { de: f.doublonDe, motif: motif.trim() } });
+    return this.factures.trouver(id);
   }
   async linkDocument(id: number, documentId: string) {
     const doc = await this.get(documentId, "document");
@@ -1242,6 +1291,24 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
         return this.saveLivrable(file, owner.id, conversationId);
       },
       tableau: async (spec) => this.saveLivrable(await this.customTable(spec, agent), owner.id, conversationId),
+      rapport: async (spec) => {
+        const titre = String(spec.titre || "Rapport").trim().slice(0, 120);
+        const contenu = String(spec.contenu || "").trim();
+        if (contenu.length < 20) throw new BadRequestException("Contenu du rapport trop court.");
+        if (contenu.length > 60000) throw new BadRequestException("Rapport trop long (60 000 caractères maximum) : scindez-le.");
+        const settings = await this.settings();
+        const createdAt = now();
+        const statut: "brouillon" | "final" = spec.statut === "final" ? "final" : "brouillon";
+        const slug = titre.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50) || "rapport";
+        const pied = `\n\n---\n_Waraqa — ${statut === "final" ? "version finale" : "brouillon de travail"} · ${settings.company.name || "société"}${spec.mois ? " · période " + spec.mois : ""} · par ${owner.nom} (agent IA) · ${createdAt.slice(0, 16).replace("T", " ")}${spec.sources?.length ? "\nDonnées consultées : " + spec.sources.join(" ; ") : ""}_\n`;
+        const out: Livrable[] = [];
+        const formats: string[] = Array.isArray(spec.formats) && spec.formats.length ? spec.formats : ["md", "pdf"];
+        if (formats.includes("md")) out.push(await this.saveLivrable({ buffer: Buffer.from(`# ${titre}\n\n${contenu}${pied}`, "utf8"), mime: "text/markdown; charset=utf-8", name: `Waraqa-rapport-${slug}${spec.mois ? "-" + spec.mois : ""}.md` }, owner.id, conversationId));
+        if (formats.includes("pdf")) out.push(await this.saveLivrable({ buffer: await markdownPdf({ title: titre, markdown: contenu, createdAt, author: owner.nom + " (agent IA)", month: spec.mois, company: settings.company, statut, sources: spec.sources }), mime: "application/pdf", name: `Waraqa-rapport-${slug}${spec.mois ? "-" + spec.mois : ""}.pdf` }, owner.id, conversationId));
+        await this.journal.ecrire({ action: "rapport_genere", utilisateurId: owner.id, saisiPar: agent.nom, details: { titre, statut, formats, caracteres: contenu.length, fichiers: out.map((l) => l.nom) } });
+        return out;
+      },
+      leverDoublon: async (factureId, motif) => { const f = await this.leverDoublon(factureId, motif, agent); return `Doublon levé sur #${factureId} (ligne distincte confirmée) — statut ${f.statut}, à revoir`; },
     };
   }
   /** Tableau sur mesure : filtres, colonnes et regroupement décrits par l'agent, calculs 100 % serveur. */
@@ -1625,6 +1692,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       lots: () => this.lots(),
       driveSummary: () => this.drive.summary(),
       precontrole: (m: string) => this.precontrole(m),
+      duplicates: (id: number) => this.duplicateGroup(id),
       plan: (m: string) => this.planTravail(m),
     };
   }

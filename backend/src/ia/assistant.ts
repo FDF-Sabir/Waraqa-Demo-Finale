@@ -31,6 +31,7 @@ export interface AssistantHost {
   company?(): Promise<any>;
   driveId?(url: string): string | null;
   precontrole?(month: string): Promise<any>;
+  duplicates?(id: number): Promise<any>;
   plan?(month: string): Promise<any>;
   driveSummary?(): Promise<{ configured: boolean; authorized: boolean; needsReauth: boolean; canRead: boolean; email: string | null }>;
   /** Exécution directe par l'agent (opérations réversibles, tracées « Agent IA (pour …) »). */
@@ -49,6 +50,9 @@ export interface AgentActions {
   importerDrive(url: string, role?: string): Promise<{ lotId: string; pieces: number; ignores: number; nom: string }>;
   fichier(format: string, mois: string, scope: 'reviewed' | 'all'): Promise<Livrable>;
   tableau(spec: any): Promise<Livrable>;
+  rapport(spec: { titre: string; contenu: string; formats?: string[]; mois?: string; statut?: string; sources?: string[] }): Promise<Livrable[]>;
+  /** Réservé à l'humain (jamais appelé directement par l'agent) : exposé pour les tests d'équivalence des chemins. */
+  leverDoublon?(factureId: number, motif: string): Promise<string>;
 }
 export interface ActionExecutee { outil: string; resume: string }
 
@@ -60,7 +64,7 @@ const REGROUPEMENTS = ['fournisseur', 'taux', 'designation', 'mois', 'sousType',
 export const ACTION_TYPES = [
   'ouvrir_page', 'ouvrir_ligne', 'rapprocher', 'exporter', 'telecharger_piece',
   'valider_ligne', 'valider_lignes', 'rattacher_periode', 'cloturer_releve', 'importer_drive',
-  'creer_snapshot', 'confirmer_designation', 'traiter_notification', 'archiver_ligne',
+  'creer_snapshot', 'confirmer_designation', 'traiter_notification', 'archiver_ligne', 'lever_doublon',
 ] as const;
 export interface ProposedAction {
   type: (typeof ACTION_TYPES)[number];
@@ -153,6 +157,16 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
     name: 'plan_de_travail',
     description: 'PLAN DE TRAVAIL du mois : entonnoir À classer → À compléter → À contrôler → Prêt pour revue → Relevé → Clôture, avec le nombre et les identifiants par étape, l’état de chaque étape et la prochaine étape à traiter. Utiliser pour organiser le travail ou répondre à « que reste-t-il à faire ».',
     input_schema: { type: 'object', properties: { mois: MONTH }, additionalProperties: false },
+  },
+  {
+    name: 'comparer_doublons',
+    description: 'Groupe de comparaison d’une ligne marquée doublon (ou référence d’un groupe) : membres, critères communs, différences champ par champ, pièces sources, décision déjà prise. Explique avant de proposer : lever_doublon (ligne distincte confirmée, décision du comptable) ou archiver_ligne (copie). Ne supprime jamais.',
+    input_schema: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'], additionalProperties: false },
+  },
+  {
+    name: 'generer_rapport',
+    description: 'AGIT : produit un RAPPORT RÉDACTIONNEL libre (analyse, synthèse d’avancement, recommandations, décisions attendues) à partir des résultats d’outils déjà obtenus, livré en Markdown et/ou PDF téléchargeables. Le contenu est du Markdown (titres ##, listes, tableaux) ; il ne contient que des chiffres issus des outils et cite ses sources dans une section « Sources ». Pas pour les relevés ou tableaux de lignes (utiliser generer_fichier / generer_tableau).',
+    input_schema: { type: 'object', properties: { titre: { type: 'string' }, contenu: { type: 'string', description: 'Markdown complet du rapport (60 000 caractères max).' }, formats: { type: 'array', items: { type: 'string', enum: ['md', 'pdf'] }, description: 'Par défaut : md et pdf.' }, mois: MONTH, statut: { type: 'string', enum: ['brouillon', 'final'] }, sources: { type: 'array', items: { type: 'string' }, description: 'Outils et périmètres consultés.' } }, required: ['titre', 'contenu'], additionalProperties: false },
   },
   {
     name: 'capacites',
@@ -277,7 +291,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
       'Propose à l’utilisateur un bouton d’action qu’IL confirmera : rien n’est exécuté par cet outil, les contrôles du serveur s’appliquent au clic. 10 propositions maximum par réponse.',
       'Navigation : ouvrir_page (page), ouvrir_ligne (factureId).',
       'Téléchargements : exporter (format ; mois et scope optionnels : reviewed = lignes revues, all = brouillon). Formats : xlsx, pdf, csv, sage, json = relevé de travail ; releve-xml = fichier EDI SIMPL ; releve-xlsx = relevé au modèle Excel DGI ; releve-pdf ; snapshot-pdf = dernier snapshot du mois ; archives-pdf = lignes archivées ; sauvegarde = sauvegarde complète (administrateur). telecharger_piece (documentId) = fichier original d’une pièce.',
-      'Actions sur les données : valider_ligne (factureId) ou valider_lignes (factureIds, 200 max) = marquer revues des lignes complètes, non doublons ; rattacher_periode (factureIds, mois) = déclarer des paiements antérieurs sur le relevé du mois ; cloturer_releve (mois, administrateur) ; importer_drive (url d’un dossier Google Drive) ; creer_snapshot (mois) ; confirmer_designation (designationId) ; traiter_notification (notificationId) ; archiver_ligne (factureId) ; rapprocher (paymentId, invoiceId, montant optionnel).',
+      'Actions sur les données : valider_ligne (factureId) ou valider_lignes (factureIds, 200 max) = marquer revues des lignes complètes, non doublons ; rattacher_periode (factureIds, mois) = déclarer des paiements antérieurs sur le relevé du mois ; cloturer_releve (mois, administrateur) ; importer_drive (url Google Drive : dossier, fichier ou feuille) ; creer_snapshot (mois) ; confirmer_designation (designationId) ; traiter_notification (notificationId) ; archiver_ligne (factureId) ; lever_doublon (factureId, justification obligatoire = motif du comptable : la ligne est une opération distincte, voir comparer_doublons) ; rapprocher (paymentId, invoiceId, montant optionnel).',
     ].join(' '),
     input_schema: {
       type: 'object',
@@ -326,12 +340,13 @@ export const ASSISTANT_RULES = `Tu es Waraqa, l’assistant du comptable de l’
 
 ## Tu es un agent : fais le travail
 - Le comptable te confie ses pièces (ZIP, dossier Drive, fichiers) et te dit ce qu’il veut. Enchaîne toi-même les traitements avec les outils marqués « AGIT » : importer un dossier Drive, relire une pièce, corriger une ligne mal lue d’après sa pièce, rattacher les déductions tardives, rapprocher les paiements évidents, confirmer les désignations, créer un snapshot, produire les fichiers et tableaux demandés.
-- Livraison : chaque fichier demandé se produit avec generer_fichier ou generer_tableau et apparaît en téléchargement sous ta réponse. Un fichier par format demandé. Format inexistant (ex. Word) : dis-le et livre le plus proche (PDF, Excel, CSV ou JSON).
+- Livraison : chaque fichier demandé se produit avec generer_fichier ou generer_tableau (données) ou generer_rapport (analyse rédigée, Markdown/PDF) et apparaît en téléchargement sous ta réponse. Un fichier par format demandé. Format inexistant (ex. Word) : dis-le et livre le plus proche (PDF, Excel, CSV, JSON ou Markdown).
+- Doublons : explique le groupe avec comparer_doublons ; la décision (lever_doublon avec le motif, ou archiver_ligne) appartient au comptable via proposer_action ; ne supprime ni ne fusionne jamais.
 - Corrige seulement ce que la pièce ou l’utilisateur établit clairement ; en cas de doute, signale la ligne au lieu de deviner. Cite la justification.
 - Rends compte à la fin : ce que tu as fait (actions et nombres), ce qui reste à vérifier, fichiers livrés.
 
 ## Ce qui reste au comptable (2 validations)
-- Marquer des lignes « revues » (attestation qu’il a contrôlé les pièces), clôturer le relevé du mois et archiver une ligne : tu ne le fais JAMAIS toi-même. Propose-le avec proposer_action (valider_lignes groupé, cloturer_releve, archiver_ligne) ; il confirmera dans un récapitulatif.
+- Marquer des lignes « revues » (attestation qu’il a contrôlé les pièces), clôturer le relevé du mois, archiver une ligne et lever un doublon : tu ne le fais JAMAIS toi-même. Propose-le avec proposer_action (valider_lignes groupé, cloturer_releve, archiver_ligne) ; il confirmera dans un récapitulatif.
 - Ne demande jamais « voulez-vous que je propose… » : quand des lignes complètes restent non revues, termine TOUJOURS par proposer_action valider_lignes (toutes en un seul bouton), puis, si des fichiers du relevé ont été demandés, par les boutons exporter définitifs (releve-xml, releve-xlsx… sans brouillon) : ils fonctionneront dès la validation confirmée. Propose cloturer_releve seulement quand toutes les lignes du mois sont revues.
 - Pour ces propositions, écris « cliquez sur … pour … » et ne mentionne un bouton que si proposer_action a été accepté dans cette réponse.
 - Pour une pièce déjà importée, utilise lire_piece plutôt que de demander de la rejoindre. Pour un classeur (Excel, CSV), commence par lire_classeur puis lis les plages nécessaires avec lire_plage ; ne demande jamais de scinder un fichier long.
@@ -527,6 +542,11 @@ export class AssistantTools {
         const p = await this.host.plan(month);
         return { summary: `Plan de travail ${month} : ${p.etapes.map((e: any) => `${e.libelle} ${e.nombre}`).join(', ')}`, data: p };
       }
+      case 'comparer_doublons': {
+        if (!this.host.duplicates) throw new BadRequestException('Comparaison indisponible.');
+        const g = await this.host.duplicates(Number(input.id));
+        return { summary: `Groupe de doublons de #${input.id} : ${g.membres.length} ligne(s)`, data: g };
+      }
       case 'capacites': {
         const drive = this.host.driveSummary ? await this.host.driveSummary() : undefined;
         return { summary: 'Catalogue des capacités', data: capabilitiesCatalog({ isAdmin: Boolean(this.host.isAdmin), aiLive: true, drive }) };
@@ -602,7 +622,7 @@ export class AssistantTools {
         return { summary: 'Identité de l’entreprise', data: { raisonSociale: c.name, ice: c.ice, identifiantFiscal: c.iff, regime: c.regime === 2 ? '2 — débits' : '1 — encaissement', ville: c.city, releveProductible: Boolean(c.name) && /^\d{1,10}$/.test(String(c.iff || '').trim()) } };
       }
       case 'corriger_ligne': case 'rattacher_periode': case 'rapprocher': case 'creer_snapshot': case 'relire_piece':
-      case 'confirmer_designation': case 'traiter_notification': case 'importer_drive': case 'importer_dossier_drive': case 'generer_fichier': case 'generer_tableau':
+      case 'confirmer_designation': case 'traiter_notification': case 'importer_drive': case 'importer_dossier_drive': case 'generer_fichier': case 'generer_tableau': case 'generer_rapport':
         return this.act(name, input);
       case 'proposer_action':
         return this.propose(input);
@@ -658,6 +678,14 @@ export class AssistantTools {
         this.livrables.push(l);
         resume = `Tableau produit : ${l.nom}`;
         data = { livre: true, fichier: l.nom, taille: l.taille };
+        break;
+      }
+      case 'generer_rapport': {
+        if (input.formats !== undefined && (!Array.isArray(input.formats) || input.formats.some((f: any) => !['md', 'pdf'].includes(f)))) throw new BadRequestException('formats : md et/ou pdf.');
+        const files = await a.rapport({ titre: String(input.titre || ''), contenu: String(input.contenu || ''), formats: input.formats, mois: input.mois ? this.month(input.mois) : undefined, statut: input.statut, sources: Array.isArray(input.sources) ? input.sources.map(String).slice(0, 30) : this.traces.map(t => t.name).filter((n, i, arr) => arr.indexOf(n) === i) });
+        this.livrables.push(...files);
+        resume = `Rapport produit : ${files.map(f => f.nom).join(', ')}`;
+        data = { livre: true, fichiers: files.map(f => ({ nom: f.nom, taille: f.taille })) };
         break;
       }
       default: throw new BadRequestException('Outil inconnu.');
@@ -751,6 +779,12 @@ export class AssistantTools {
       const f = await this.host.findInvoice(Number(input.factureId));
       if (!f || f.archivee) throw new BadRequestException('Ligne introuvable ou déjà archivée.');
       action.factureId = f.id;
+    } else if (input.type === 'lever_doublon') {
+      const f = await this.host.findInvoice(Number(input.factureId));
+      if (!f || f.archivee) throw new BadRequestException('Ligne introuvable ou archivée.');
+      if (!f.doublonDe) throw new BadRequestException(`#${f.id} n’est pas marquée doublon.`);
+      if (!action.justification || action.justification.length < 5) throw new BadRequestException('Justification (motif du comptable, 5 caractères minimum) requise pour lever un doublon.');
+      action.factureId = f.id;
     } else throw new BadRequestException('Type d’action inconnu.');
     this.actions.push(action);
     return { summary: `Proposition : ${libelle}`, data: { enregistre: true, note: 'Bouton affiché à l’utilisateur ; rien n’est exécuté sans sa confirmation.' } };
@@ -781,7 +815,7 @@ const STEP_LABELS: Record<string, string> = {
   creer_snapshot: 'Création du snapshot', relire_piece: 'Relecture d’une pièce', confirmer_designation: 'Confirmation d’une désignation',
   traiter_notification: 'Traitement d’une notification', importer_drive: 'Import depuis Google Drive', importer_dossier_drive: 'Import depuis Google Drive', generer_fichier: 'Production du fichier',
   capacites: 'Consultation des capacités', precontroler_releve: 'Précontrôle de la période', plan_de_travail: 'Plan de travail',
-  generer_tableau: 'Production du tableau',
+  generer_tableau: 'Production du tableau', generer_rapport: 'Rédaction du rapport', comparer_doublons: 'Comparaison des doublons',
   lire_piece: 'Lecture d’une pièce', lire_classeur: 'Index du classeur', lire_plage: 'Lecture d’une plage du classeur', entreprise: 'Lecture de l’entreprise',
 };
 

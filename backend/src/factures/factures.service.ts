@@ -55,6 +55,15 @@ export class FacturesService {
     }
   }
 
+  /** Décision humaine « ligne distincte confirmée » (plan L2.4) : la re-détection ne remarque plus ce même couple. */
+  private async doublonLeve(id: number, candidat?: number | null): Promise<boolean> {
+    if (!candidat) return false;
+    const rows = await this.repo.manager.query("SELECT data FROM workspace_records WHERE id = ?", ['doublon-decision-' + id]);
+    if (!rows.length) return false;
+    const d = JSON.parse(rows[0].data);
+    return d.decision === 'ligne_distincte' && (d.de === candidat || (Array.isArray(d.exclus) && d.exclus.includes(candidat)));
+  }
+
   async lister(): Promise<FactureEntity[]> {
     return this.repo.find({ where: { archivee: false } });
   }
@@ -319,7 +328,8 @@ export class FacturesService {
     });
 
     const autres = (await this.lister()).filter(f => f.id !== id);
-    facture.doublonDe = detecterDoublon(facture, autres)?.id ?? null as any;
+    const candidat = detecterDoublon(facture, autres)?.id ?? null;
+    facture.doublonDe = (await this.doublonLeve(id, candidat)) ? null as any : candidat as any;
     const { id: rowId, creeLe, modifieLe, version, ...changes } = facture;
     const updated = await this.repo.update({ id, version }, { ...changes, version: version + 1 });
     if (!updated.affected) throw new ConflictException('Modification concurrente. Rechargez la ligne ; votre saisie reste disponible.');
@@ -355,7 +365,8 @@ export class FacturesService {
 
     facture.statut = StatutFacture.VALIDEE;
     const autres = (await this.lister()).filter(f => f.id !== id);
-    facture.doublonDe = detecterDoublon(facture, autres)?.id ?? null as any;
+    const candidat = detecterDoublon(facture, autres)?.id ?? null;
+    facture.doublonDe = (await this.doublonLeve(id, candidat)) ? null as any : candidat as any;
     const sauvegardee = await this.repo.save(facture);
 
     await this.journal.ecrire({
