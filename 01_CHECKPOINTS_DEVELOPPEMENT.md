@@ -27,7 +27,7 @@ Demande du 24/09/2026 : appliquer le plan directeur `00_PLAN_DIRECTEUR_WARAQA_IN
 | CP03 — Sauvegarde complète | L1.5 | Réalisé | Format `waraqa-backup-2` (SQLite, originaux, livrables, boîte d'envoi) ; `scripts/restore.cjs` refuse un livrable référencé absent ; `docs/checkpoints/CP03-tests.log` |
 | CP04 — Rôles documentaires, contrat Drive, catalogue | L1.2, L1.3, L2.1 | Réalisé | `document-role.ts` (8 rôles, signaux chemin/structure/périodes/identité, contradiction de société), statut `reference` sans ligne, reclassement tracé `POST /workspace/documents/:id/role`, outil `importer_drive` (dossier/fichier/Sheets, rôle), outil et route `capacites`, `pieces` paginé ; tests `document-role.spec.ts` (7), `document-roles.e2e-spec.ts` (4) ; `docs/checkpoints/CP04-tests.log` |
 | CP05 — Lecture des gros classeurs | L3.1 | Réalisé | `workbook-reader.ts` (index : feuilles, plages, en-têtes, formules, fusions, noms, mappage XML, identité ; plages ≤ 200 lignes avec total/couvert/reste, formules sans cache et dates signalées), outils `lire_classeur`/`lire_plage`, `lire_piece` paginé, classeur joint au chat = index + aperçu (plus de refus) ; tests `workbook-reader.spec.ts` (4), `workbook-chat.e2e-spec.ts` ; `docs/checkpoints/CP05-tests.log` |
-| CP06 — Précontrôle et plan de travail | L1.1, L8.1 | À faire | Blocages harmonisés UI/IA ; entonnoir À classer → Clôture |
+| CP06 — Précontrôle et plan de travail | L1.1, L8.1 | Réalisé (backend) | `cockpit.ts` : blocages codés avec gravité, identifiants et action qui les lève ; entonnoir 6 étapes avec invites IA ; routes `precontrole` / `plan-travail`, outils `precontroler_releve` / `plan_de_travail` ; `cockpit.e2e-spec.ts` (3) ; interface en CP11 |
 | CP07 — Clôture versionnée | L5.3 | À faire | Version figée complète, export depuis la version, réouverture tracée |
 | CP08 — Doublons explicables | L2.4 | À faire | Groupe de comparaison, décision humaine réversible |
 | CP09 — Rapports rédactionnels | L3.4 | À faire | Markdown/PDF téléchargeables depuis le chat |
@@ -37,4 +37,4 @@ Demande du 24/09/2026 : appliquer le plan directeur `00_PLAN_DIRECTEUR_WARAQA_IN
 
 ## Prochaine action exacte
 
-CP06 : précontrôle métier (`GET /workspace/precontrole?month=`, outil `precontroler_releve`) et plan de travail (`GET /workspace/plan-travail?month=`, outil `plan_de_travail`) : blocages harmonisés UI/IA, entonnoir À classer → À compléter → À contrôler → Prêt pour revue → Relevé → Clôture, avec identifiants et invites prêtes pour l'IA.
+CP07 : clôture versionnée — `releve_version` figée (en-tête, lignes, contrôles, écartées, alertes, totaux, règles, empreintes XML/XLSX), export d'une période clôturée depuis la version, réouverture qui conserve l'historique ; tests dans `releve-lot` / nouveau `releve-version.e2e-spec.ts`.

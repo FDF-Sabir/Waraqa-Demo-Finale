@@ -30,6 +30,8 @@ export interface AssistantHost {
   readWorkbook?(id: string, spec?: { feuille?: string; debut?: number; nombre?: number; colonnes?: string[] }): Promise<any>;
   company?(): Promise<any>;
   driveId?(url: string): string | null;
+  precontrole?(month: string): Promise<any>;
+  plan?(month: string): Promise<any>;
   driveSummary?(): Promise<{ configured: boolean; authorized: boolean; needsReauth: boolean; canRead: boolean; email: string | null }>;
   /** Exécution directe par l'agent (opérations réversibles, tracées « Agent IA (pour …) »). */
   act?: AgentActions;
@@ -141,6 +143,16 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
     name: 'pieces',
     description: 'Documents importés, PAGINÉS (total, couvert, reste) : nom, rôle documentaire, statut, erreurs, lignes créées, périodes et identité détectées pour un classeur. Statuts : a_verifier, partiel, a_saisir, erreur, reference (document de référence sans ligne), apercu, interrompu, annule, en_cours. Rôles : piece_comptable, paiement, modele, historique, referentiel, justificatif_annexe, evaluation, a_classifier. Parcourir toutes les pages avant d’affirmer qu’une analyse est exhaustive.',
     input_schema: { type: 'object', properties: { statut: { type: 'string' }, role: { type: 'string', enum: DOCUMENT_ROLES }, recherche: { type: 'string', description: 'Texte contenu dans le nom du fichier.' }, lot: { type: 'string', description: 'Identifiant d’un import en lot (voir imports).' }, page: { type: 'integer' }, taille: { type: 'integer', description: '100 maximum.' } }, additionalProperties: false },
+  },
+  {
+    name: 'precontroler_releve',
+    description: 'PRÉCONTRÔLE d’une période, calculé par le serveur : fiche entreprise (raison sociale, IF, ICE), pièces à reprendre / à classer / de référence, lignes (revues, non revues, incomplètes, doublons, vigilance), relevé (retenues, écartées par motif, alertes, déductions tardives) et la liste des BLOCAGES avec leur gravité et l’action qui les lève. Appeler en premier pour toute demande de relevé, de déclaration ou de « qu’est-ce qui bloque » ; ce sont les mêmes raisons que l’interface.',
+    input_schema: { type: 'object', properties: { mois: MONTH }, additionalProperties: false },
+  },
+  {
+    name: 'plan_de_travail',
+    description: 'PLAN DE TRAVAIL du mois : entonnoir À classer → À compléter → À contrôler → Prêt pour revue → Relevé → Clôture, avec le nombre et les identifiants par étape, l’état de chaque étape et la prochaine étape à traiter. Utiliser pour organiser le travail ou répondre à « que reste-t-il à faire ».',
+    input_schema: { type: 'object', properties: { mois: MONTH }, additionalProperties: false },
   },
   {
     name: 'capacites',
@@ -304,7 +316,7 @@ export const ASSISTANT_RULES = `Tu es Waraqa, l’assistant du comptable de l’
 - Convention douane : IF = ICE = « 1111 » n’est pas une anomalie.
 - ID_PAIE (idPaie) est le mode de paiement DGI : 1 espèces, 2 chèque, 3 prélèvement, 4 virement, 5 effet, 6 compensation, 7 autres.
 - Taux de TVA acceptés par l’application : 0 %, 7 %, 10 %, 14 %, 20 %.
-- Relevé de déduction (déclaration TVA) : appelle releve_deduction. Seules les lignes revues et conformes y figurent ; explique chaque ligne écartée par sa raison et propose de l’ouvrir (ouvrir_ligne). Pour le dépôt SIMPL, propose exporter au format releve-xml (et releve-xlsx pour le modèle Excel DGI). Dans ton texte, nomme-les « fichier XML SIMPL » et « Excel modèle DGI », jamais par leur code technique.
+- Relevé de déduction (déclaration TVA) : commence par precontroler_releve (blocages et actions qui les lèvent, identiques à l’interface), puis appelle releve_deduction. Seules les lignes revues et conformes y figurent ; explique chaque ligne écartée par sa raison et propose de l’ouvrir (ouvrir_ligne). Pour le dépôt SIMPL, propose exporter au format releve-xml (et releve-xlsx pour le modèle Excel DGI). Dans ton texte, nomme-les « fichier XML SIMPL » et « Excel modèle DGI », jamais par leur code technique.
 - Parle comme un comptable : jamais de nom technique (scope, reviewed, factNum, iceFrs, nom d’outil ou de format) ; dis « lignes revues », « N° de facture », « ICE », « fichier XML SIMPL ».
 - Quand tu cites un nombre de lignes, compte exactement les identifiants que tu donnes (ou reprends le total de l’outil).
 - Imports d’un dossier (ZIP ou lien Google Drive) : appelle imports pour l’avancement et les erreurs par fichier.
@@ -502,6 +514,18 @@ export class AssistantTools {
             pieces: slice.map(d => ({ id: d.id, nom: d.data.name, role: d.data.role || 'piece_comptable', roleChoisiPar: d.data.roleSource, statut: d.data.status, mode: d.data.mode, lignes: d.data.invoiceIds?.length || 0, erreurs: (d.data.errors || []).slice(0, 5), importeLe: d.data.createdAt, confiance: d.data.confidence,
               indices: d.data.roleSuggestion?.indices?.slice(0, 3), periodes: d.data.periodes, identite: d.data.identite ? { ...d.data.identite, contradictoire: Boolean(d.data.identiteContradictoire) } : undefined, lot: d.data.lot || undefined })) },
         };
+      }
+      case 'precontroler_releve': {
+        const month = this.month(input.mois);
+        if (!this.host.precontrole) throw new BadRequestException('Précontrôle indisponible.');
+        const p = await this.host.precontrole(month);
+        return { summary: `Précontrôle ${month} : ${p.resume}`, data: p };
+      }
+      case 'plan_de_travail': {
+        const month = this.month(input.mois);
+        if (!this.host.plan) throw new BadRequestException('Plan de travail indisponible.');
+        const p = await this.host.plan(month);
+        return { summary: `Plan de travail ${month} : ${p.etapes.map((e: any) => `${e.libelle} ${e.nombre}`).join(', ')}`, data: p };
       }
       case 'capacites': {
         const drive = this.host.driveSummary ? await this.host.driveSummary() : undefined;
@@ -756,7 +780,7 @@ const STEP_LABELS: Record<string, string> = {
   corriger_ligne: 'Correction d’une ligne', rattacher_periode: 'Rattachement au relevé', rapprocher: 'Rapprochement d’un paiement',
   creer_snapshot: 'Création du snapshot', relire_piece: 'Relecture d’une pièce', confirmer_designation: 'Confirmation d’une désignation',
   traiter_notification: 'Traitement d’une notification', importer_drive: 'Import depuis Google Drive', importer_dossier_drive: 'Import depuis Google Drive', generer_fichier: 'Production du fichier',
-  capacites: 'Consultation des capacités',
+  capacites: 'Consultation des capacités', precontroler_releve: 'Précontrôle de la période', plan_de_travail: 'Plan de travail',
   generer_tableau: 'Production du tableau',
   lire_piece: 'Lecture d’une pièce', lire_classeur: 'Index du classeur', lire_plage: 'Lecture d’une plage du classeur', entreprise: 'Lecture de l’entreprise',
 };

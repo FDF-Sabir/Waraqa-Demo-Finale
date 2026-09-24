@@ -15,6 +15,7 @@ import { construireReleve, releveXlsx, releveXml, ReleveHeader } from "./releve"
 import { ACCEPTED, extractZip, unsupportedReason } from "./archive-import";
 import { classifyDocument, createsLines, DocumentRole, parseRole, ROLE_LABELS } from "./document-role";
 import { describeIndex, readRange, workbookIndex } from "./workbook-reader";
+import { buildPlan, buildPrecontrole } from "./cockpit";
 import {
   BadRequestException,
   ConflictException,
@@ -1587,8 +1588,18 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       releve: (m: string, scope: string) => this.releve(m, scope),
       lots: () => this.lots(),
       driveSummary: () => this.drive.summary(),
+      precontrole: (m: string) => this.precontrole(m),
+      plan: (m: string) => this.planTravail(m),
     };
   }
+  private async cockpitInput(month: string) {
+    const [summary, releve, documents, lots, settings] = await Promise.all([this.summary(month), this.releve(month, "reviewed"), this.list("document"), this.lots(), this.settings()]);
+    return { month, company: settings.company, rows: summary.rows, isBank: (f: FactureEntity) => this.bank(f), releve, documents, lots };
+  }
+  /** Précontrôle métier d'une période : société, sources, lignes, relevé, blocages harmonisés (interface et assistant). */
+  async precontrole(month: string) { return buildPrecontrole(await this.cockpitInput(month)); }
+  /** Plan de travail : entonnoir À classer → À compléter → À contrôler → Prêt pour revue → Relevé → Clôture. */
+  async planTravail(month: string) { return buildPlan(await this.cockpitInput(month)); }
   /** Catalogue réel des capacités (outils, propositions, formats, pages, rôles), pour l'interface et l'assistant. */
   async capabilities(user: any) {
     const u = await this.users.findOneBy({ id: user.sub });

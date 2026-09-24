@@ -1,0 +1,32 @@
+
+> waraqa-unified-backend@4.5.0 test:e2e
+> jest --config ./test/jest-e2e.json --runInBand --testPathPattern=cockpit
+
+FAIL test/cockpit.e2e-spec.ts
+  Précontrôle et plan de travail
+    ✕ précontrôle : société incomplète, lignes non revues, incomplètes, doublons et documents à classer, avec actions (43 ms)
+    ✓ plan de travail : entonnoir avec identifiants, états et invites prêtes pour l’assistant (11 ms)
+    ✓ les mêmes résultats sont servis à l’assistant, puis les blocages tombent quand le travail est fait (68 ms)
+
+  ● Précontrôle et plan de travail › précontrôle : société incomplète, lignes non revues, incomplètes, doublons et documents à classer, avec actions
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 1
+    Received: 3
+
+      52 |     expect(p.blocages.find((b: any) => b.code === 'doublons_non_traites').ids).toEqual([dup]);
+      53 |     expect(p.pret).toEqual({ brouillon: true, definitif: false, cloture: false });
+    > 54 |     expect(p.releve.ecarteesParMotif.revue).toBe(1);
+         |                                             ^
+      55 |   });
+      56 |   it('plan de travail : entonnoir avec identifiants, états et invites prêtes pour l’assistant', async () => {
+      57 |     const plan = (await auth(api().get(`/workspace/plan-travail?month=${M}`)).expect(200)).body;
+
+      at Object.<anonymous> (cockpit.e2e-spec.ts:54:45)
+
+Test Suites: 1 failed, 1 total
+Tests:       1 failed, 2 passed, 3 total
+Snapshots:   0 total
+Time:        4.127 s, estimated 5 s
+Ran all test suites matching /cockpit/i.

@@ -68,6 +68,8 @@ export class UnifiedController {
     return this.service.updateSettings(b, u);
   }
   @UseGuards(JwtAuthGuard) @Get('invoices') searchInvoices(@Query() q:any) {return this.service.searchInvoices(month(q.month),q.search || '',q.filter || 'all',Number(q.page || 1),Number(q.size || 15),q.sort || 'recent');}
+  @UseGuards(JwtAuthGuard) @Get("precontrole") precontrole(@Query("month") m: string) { return this.service.precontrole(month(m)); }
+  @UseGuards(JwtAuthGuard) @Get("plan-travail") planTravail(@Query("month") m: string) { return this.service.planTravail(month(m)); }
   @UseGuards(JwtAuthGuard) @Get("summary") summary(@Query("month") m: string) {
     return this.service.summary(month(m));
   }
