@@ -25,7 +25,7 @@ const SOURCE_LABELS: Record<string, string> = {
   snapshots: "Snapshots", lire_piece: "Pièce", entreprise: "Entreprise",
   corriger_ligne: "Correction", rattacher_periode: "Rattachement", rapprocher: "Rapprochement", creer_snapshot: "Snapshot",
   relire_piece: "Relecture", confirmer_designation: "Désignation", traiter_notification: "Notification",
-  importer_dossier_drive: "Import Drive", generer_fichier: "Fichier", generer_tableau: "Tableau",
+  importer_dossier_drive: "Import Drive", importer_drive: "Import Drive", capacites: "Capacités", generer_fichier: "Fichier", generer_tableau: "Tableau",
 };
 
 /** Actions proposées par l'assistant qui modifient les données : confirmation explicite avant exécution. */
@@ -37,7 +37,7 @@ function describeAction(a: any) {
     case "valider_lignes": return `Marquer ${a.factureIds.length} ligne(s) comme revues : ${list(a.factureIds)}. Vous confirmez avoir contrôlé les pièces.`;
     case "rattacher_periode": return `Déclarer ${a.factureIds.length} paiement(s) antérieur(s) sur le relevé de ${a.mois} : ${list(a.factureIds)}.`;
     case "cloturer_releve": return `Clôturer le relevé de déduction de ${a.mois} : les lignes déclarées restent rattachées à cette période.`;
-    case "importer_drive": return `Importer toutes les pièces du dossier Google Drive : ${a.url}`;
+    case "importer_drive": return `Importer depuis Google Drive (dossier, fichier ou feuille Google Sheets) : ${a.url}`;
     case "creer_snapshot": return `Créer un snapshot figé de ${a.mois} (copié dans Google Drive si connecté).`;
     case "confirmer_designation": return `Confirmer la désignation en attente #${a.designationId}.`;
     case "traiter_notification": return `Marquer la notification #${a.notificationId} comme traitée.`;

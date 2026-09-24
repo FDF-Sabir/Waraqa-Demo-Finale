@@ -57,7 +57,9 @@ describe('Relevé de déduction et import de dossier ZIP', () => {
 
   it('Import ZIP : sous-dossiers, modèle DGI (en-têtes ligne 8, ligne Total), CSV, JSON, formats ignorés', async () => {
     // Relevé DGI existant produit au modèle officiel : en-tête sur 7 lignes, Tableau5, ligne Total.
-    const dgi = releveXlsx({ raisonSociale: 'ANCIEN', identifiantFiscal: '999', annee: 2026, periode: 6, regime: 1 }, [
+    // Classeur au modèle officiel de LA société configurée : lu comme pièce. (Un classeur d'une autre société
+    // resterait « à classer » sans créer de ligne : voir document-roles.e2e-spec.ts.)
+    const dgi = releveXlsx({ raisonSociale: 'STE EXEMPLE SARL', identifiantFiscal: '12345678', annee: 2026, periode: 6, regime: 1 }, [
       { id: 1, ord: 1, factNum: '8411', designation: 'RECEVEUR DOUANE', mHt: 1000, tva: 200, mTtc: 1200, iff: '1111', libFrss: 'DROIT DOUANE', iceFrs: '1111', taux: 0.2, idPaie: 4, datePaie: '2026-07-03', dateFac: '2026-07-01', revueHumaine: true },
       { id: 2, ord: 2, factNum: 'FA-GAS', designation: 'GASOIL', mHt: 1000, tva: 100, mTtc: 1100, iff: '15277977', libFrss: 'ENERIA MAROC', iceFrs: '002245147000017', taux: 0.1, idPaie: 3, datePaie: '2026-07-05', dateFac: '2026-07-02', revueHumaine: true },
       { id: 3, ord: 3, factNum: 'SANS-ICE', designation: 'SERVICE', mHt: 500, tva: 100, mTtc: 600, iff: '5550001', libFrss: 'PRESTATAIRE', iceFrs: '', taux: 0.2, idPaie: 4, datePaie: '2026-07-06', dateFac: '2026-07-06', revueHumaine: true },

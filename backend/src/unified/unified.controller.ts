@@ -118,9 +118,12 @@ export class UnifiedController {
   @UseInterceptors(
     FileInterceptor("file", { limits: { fileSize: 20 * 1024 * 1024 } }),
   )
-  upload(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any, @Query("preview") preview?: string, @Query("reuse") reuse?: string) {
-    return this.service.upload(f, u, preview === "true", reuse === "true");
+  upload(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any, @Query("preview") preview?: string, @Query("reuse") reuse?: string, @Query("role") role?: string) {
+    return this.service.upload(f, u, preview === "true", reuse === "true", role);
   }
+  @UseGuards(JwtAuthGuard) @Get("documents/roles") documentRoles() { return this.service.documentRoles(); }
+  @UseGuards(JwtAuthGuard) @Post("documents/:id/role") setRole(@Param('id') id: string, @Body() b: any, @UtilisateurCourant() u: any) { return this.service.setDocumentRole(id, b?.role, u); }
+  @UseGuards(JwtAuthGuard) @Get("capacites") capacites(@UtilisateurCourant() u: any) { return this.service.capabilities(u); }
   @UseGuards(JwtAuthGuard) @Get("documents/:id/preview") preview(@Param('id') id: string) { return this.service.importPreview(id); }
   @UseGuards(JwtAuthGuard) @Put("documents/:id/mapping") mapping(@Param('id') id: string, @Body() b: any) { return this.service.importPreview(id, b.mapping); }
   @UseGuards(JwtAuthGuard) @Post("documents/:id/commit") commit(@Param('id') id: string, @UtilisateurCourant() u: any) { return this.service.resumeImport(id, u); }
@@ -215,11 +218,11 @@ export class UnifiedController {
   }
   @UseGuards(JwtAuthGuard) @Get("imports") lots() { return this.service.lots(); }
   @UseGuards(JwtAuthGuard) @Get("imports/:id") lot(@Param("id") id: string) { return this.service.get(id, "import_lot"); }
-  @UseGuards(JwtAuthGuard) @Post("imports/drive") importDrive(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.importDriveFolder(b?.url, u); }
+  @UseGuards(JwtAuthGuard) @Post("imports/drive") importDrive(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.importDriveFolder(b?.url, u, b?.role); }
   @UseGuards(JwtAuthGuard)
   @Post("imports/zip")
   @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 300 * 1024 * 1024 } }))
-  importZip(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any) { return this.service.importZip(f, u); }
+  importZip(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any, @Query("role") role?: string) { return this.service.importZip(f, u, role); }
   @UseGuards(JwtAuthGuard) @Get("livrables/:id") async livrable(@Param("id") id: string, @UtilisateurCourant() u: any, @Res() res: Response) {
     const f = await this.service.livrable(id, u);
     res.setHeader("Content-Type", f.mime);

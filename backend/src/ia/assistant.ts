@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { BadRequestException } from '@nestjs/common';
 import { IaGateway } from '../ocr/ia-gateway';
 import { FactureEntity } from '../factures/facture.entity';
+import { DOCUMENT_ROLES, LINE_CREATING_ROLES, ROLE_LABELS } from '../unified/document-role';
 
 /**
  * Assistant comptable connecté (Claude + outils en lecture seule).
@@ -28,6 +29,7 @@ export interface AssistantHost {
   readDocument?(id: string): Promise<{ nom: string; statut: string; type: string; texte: string } | null>;
   company?(): Promise<any>;
   driveId?(url: string): string | null;
+  driveSummary?(): Promise<{ configured: boolean; authorized: boolean; needsReauth: boolean; canRead: boolean; email: string | null }>;
   /** Exécution directe par l'agent (opérations réversibles, tracées « Agent IA (pour …) »). */
   act?: AgentActions;
 }
@@ -41,7 +43,7 @@ export interface AgentActions {
   relire(documentId: string): Promise<string>;
   confirmerDesignation(id: number): Promise<string>;
   traiterNotification(id: number): Promise<string>;
-  importerDrive(url: string): Promise<{ lotId: string; pieces: number; ignores: number; nom: string }>;
+  importerDrive(url: string, role?: string): Promise<{ lotId: string; pieces: number; ignores: number; nom: string }>;
   fichier(format: string, mois: string, scope: 'reviewed' | 'all'): Promise<Livrable>;
   tableau(spec: any): Promise<Livrable>;
 }
@@ -81,6 +83,8 @@ export interface ProposedAction {
 export interface ToolTrace { name: string; input: any; summary: string; truncated?: boolean }
 
 const PAGES = ['dashboard', 'releve', 'import', 'banque', 'declaration', 'exports', 'journal', 'designations', 'reglages'];
+export const PAGE_LABELS: Record<string, string> = { dashboard: 'Vue d’ensemble', releve: 'Pièces & relevé TVA', import: 'Importer des pièces', banque: 'Rapprochement bancaire', declaration: 'Relevé de déduction', exports: 'Exports & snapshots', journal: 'Journal d’activité', designations: 'Désignations', reglages: 'Réglages' };
+export const FORMAT_LABELS: Record<string, string> = { xlsx: 'Relevé de travail Excel (13 colonnes Tableau5)', pdf: 'Relevé de travail PDF', csv: 'Relevé de travail CSV', sage: 'Écritures Sage (CSV)', json: 'Relevé de travail JSON', 'releve-xml': 'Fichier XML SIMPL (dépôt DGI)', 'releve-xlsx': 'Relevé de déduction au modèle Excel DGI', 'releve-pdf': 'Relevé de déduction PDF', 'snapshot-pdf': 'Dernier snapshot du mois (PDF)', 'archives-pdf': 'Lignes archivées (PDF)', sauvegarde: 'Sauvegarde complète (administrateur)' };
 const EXPORT_FORMATS = ['xlsx', 'pdf', 'csv', 'sage', 'json', 'releve-xml', 'releve-xlsx', 'releve-pdf', 'snapshot-pdf', 'archives-pdf', 'sauvegarde'];
 const MAX_ACTIONS = 10;
 const MONTH = { type: 'string', description: 'Période AAAA-MM. Par défaut : la période de la discussion.' };
@@ -134,8 +138,13 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'pieces',
-    description: 'Pièces importées (nom, statut d’import, erreurs, lignes créées, mode d’extraction). Statuts : a_saisir, a_verifier, partiel, erreur, apercu, interrompu, annule, en_cours.',
-    input_schema: { type: 'object', properties: { statut: { type: 'string' }, limite: { type: 'integer' } }, additionalProperties: false },
+    description: 'Documents importés, PAGINÉS (total, couvert, reste) : nom, rôle documentaire, statut, erreurs, lignes créées, périodes et identité détectées pour un classeur. Statuts : a_verifier, partiel, a_saisir, erreur, reference (document de référence sans ligne), apercu, interrompu, annule, en_cours. Rôles : piece_comptable, paiement, modele, historique, referentiel, justificatif_annexe, evaluation, a_classifier. Parcourir toutes les pages avant d’affirmer qu’une analyse est exhaustive.',
+    input_schema: { type: 'object', properties: { statut: { type: 'string' }, role: { type: 'string', enum: DOCUMENT_ROLES }, recherche: { type: 'string', description: 'Texte contenu dans le nom du fichier.' }, lot: { type: 'string', description: 'Identifiant d’un import en lot (voir imports).' }, page: { type: 'integer' }, taille: { type: 'integer', description: '100 maximum.' } }, additionalProperties: false },
+  },
+  {
+    name: 'capacites',
+    description: 'Catalogue RÉEL de ce que l’application sait faire : outils de lecture, actions exécutables, propositions, formats de fichiers, pages, rôles documentaires, état des accès (IA, Google Drive, droits). À consulter AVANT d’affirmer qu’une fonction n’existe pas : distinguer fonction absente, accès manquant et erreur technique.',
+    input_schema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'releve_deduction',
@@ -213,9 +222,9 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
     input_schema: { type: 'object', properties: { notificationId: { type: 'integer' } }, required: ['notificationId'], additionalProperties: false },
   },
   {
-    name: 'importer_dossier_drive',
-    description: 'AGIT : importe toutes les pièces d’un dossier Google Drive (lien). L’import tourne en arrière-plan ; la demande de l’utilisateur sera reprise AUTOMATIQUEMENT à la fin : termine ta réponse en l’annonçant, sans attendre.',
-    input_schema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'], additionalProperties: false },
+    name: 'importer_drive',
+    description: 'AGIT : importe depuis Google Drive, à partir d’un lien ou d’un identifiant : un DOSSIER (sous-dossiers compris), un FICHIER unique (PDF, image, Excel, CSV, JSON) ou une feuille GOOGLE SHEETS (convertie en Excel). Le rôle documentaire est détecté automatiquement (classeur historique, modèle, référentiel, vérité terrain = aucune ligne créée) ; « role » l’impose : piece_comptable pour comptabiliser, modele/historique/referentiel pour consulter sans créer de ligne. Prérequis : Drive connecté par un administrateur et lecture autorisée (sinon l’erreur le dit ; ce n’est pas une limite de format). L’import tourne en arrière-plan ; la demande sera reprise AUTOMATIQUEMENT à la fin : termine ta réponse en l’annonçant.',
+    input_schema: { type: 'object', properties: { url: { type: 'string' }, role: { type: 'string', enum: DOCUMENT_ROLES } }, required: ['url'], additionalProperties: false },
   },
   {
     name: 'generer_fichier',
@@ -288,6 +297,9 @@ export const ASSISTANT_RULES = `Tu es Waraqa, l’assistant du comptable de l’
 - Parle comme un comptable : jamais de nom technique (scope, reviewed, factNum, iceFrs, nom d’outil ou de format) ; dis « lignes revues », « N° de facture », « ICE », « fichier XML SIMPL ».
 - Quand tu cites un nombre de lignes, compte exactement les identifiants que tu donnes (ou reprends le total de l’outil).
 - Imports d’un dossier (ZIP ou lien Google Drive) : appelle imports pour l’avancement et les erreurs par fichier.
+- Rôles documentaires : un classeur historique, un modèle du comptable, un référentiel ou un fichier de vérité terrain est CONSERVÉ comme référence et ne crée aucune ligne ; dis-le. Une raison sociale ou un IF lus dans un tel document ne sont JAMAIS recopiés dans la fiche entreprise : signale la contradiction et laisse le comptable décider.
+- Avant d’écrire qu’une fonction n’existe pas, appelle capacites. Trois réponses différentes : fonction absente, accès manquant (Drive non connecté, droit administrateur, clé IA), erreur technique. Un lien Google Drive vers un FICHIER ou une feuille Google Sheets est pris en charge par importer_drive.
+- Couverture : chaque résultat paginé indique total, couvert et reste ; parcours toutes les pages nécessaires ou annonce explicitement la part examinée. Ne présente jamais une analyse partielle comme exhaustive.
 
 ## Tu es un agent : fais le travail
 - Le comptable te confie ses pièces (ZIP, dossier Drive, fichiers) et te dit ce qu’il veut. Enchaîne toi-même les traitements avec les outils marqués « AGIT » : importer un dossier Drive, relire une pièce, corriger une ligne mal lue d’après sa pièce, rattacher les déductions tardives, rapprocher les paiements évidents, confirmer les désignations, créer un snapshot, produire les fichiers et tableaux demandés.
@@ -310,6 +322,32 @@ export const ASSISTANT_RULES = `Tu es Waraqa, l’assistant du comptable de l’
 - Termine, si pertinent, par les prochaines actions concrètes.`;
 
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+/** Catalogue généré depuis le registre réel des outils : jamais une liste écrite à la main. */
+export function capabilitiesCatalog(ctx: { isAdmin: boolean; aiLive?: boolean; drive?: { configured: boolean; authorized: boolean; needsReauth: boolean; canRead: boolean; email?: string | null } }) {
+  const tool = (t: Anthropic.Tool) => ({ nom: t.name, description: t.description || '', parametres: Object.keys((t.input_schema as any).properties || {}) });
+  const actions = ASSISTANT_TOOLS.filter(t => /^AGIT/.test(t.description || ''));
+  const lecture = ASSISTANT_TOOLS.filter(t => !/^AGIT/.test(t.description || '') && t.name !== 'proposer_action');
+  const d = ctx.drive;
+  return {
+    version: '4.6.0',
+    resume: `${lecture.length} outils de lecture, ${actions.length} actions exécutables, ${ACTION_TYPES.length} types de propositions confirmables, ${EXPORT_FORMATS.length} formats de fichiers, ${PAGES.length} pages, ${DOCUMENT_ROLES.length} rôles documentaires.`,
+    lecture: lecture.map(tool),
+    actions: actions.map(tool),
+    propositions: ACTION_TYPES.map(type => ({ type, validationHumaine: ['valider_ligne', 'valider_lignes', 'cloturer_releve', 'archiver_ligne', 'lever_doublon'].includes(type), administrateur: type === 'cloturer_releve' })),
+    formatsFichiers: EXPORT_FORMATS.map(f => ({ code: f, libelle: FORMAT_LABELS[f] || f, administrateur: f === 'sauvegarde' })),
+    pages: PAGES.map(p => ({ code: p, libelle: PAGE_LABELS[p] || p })),
+    rolesDocumentaires: DOCUMENT_ROLES.map(r => ({ code: r, libelle: ROLE_LABELS[r], creeDesLignes: LINE_CREATING_ROLES.includes(r) })),
+    entrees: ['Fichiers : PDF, JPG, PNG, GIF, WEBP, XLSX, XLS, CSV, JSON, ZIP (sous-dossiers, ZIP inclus)', 'Google Drive : dossier, fichier unique ou feuille Google Sheets (lien ou identifiant)', 'Formats refusés avec motif : HEIC, TIFF, Word, e-mail (convertir en PDF/JPG)'],
+    acces: {
+      administrateur: ctx.isAdmin, iaConnectee: ctx.aiLive !== false,
+      googleDrive: d ? { configure: d.configured, connecte: d.authorized, lectureAutorisee: d.canRead, reautorisationRequise: d.needsReauth, compte: d.email || null,
+        etat: !d.configured ? 'Identifiants Google absents : Réglages → Intégrations (administrateur)' : !d.authorized ? 'Drive non connecté : Réglages → Intégrations (administrateur)' : d.needsReauth ? 'Autorisation Google à renouveler' : !d.canRead ? 'Lecture des dossiers Drive à autoriser au premier import (bouton proposé)' : 'Prêt' } : undefined,
+    },
+    reserveAuComptable: ['Marquer des lignes revues', 'Clôturer ou rouvrir une période (administrateur)', 'Archiver une ligne', 'Lever un doublon', 'Modifier la fiche entreprise, les droits ou les secrets'],
+    limites: ['300 actions et 10 propositions par réponse', 'Résultats d’outils paginés : total / couvert / reste', 'Aucune certification fiscale : les points « à vérifier » restent au comptable'],
+  };
+}
 
 function compact(f: FactureEntity) {
   return {
@@ -439,12 +477,24 @@ export class AssistantTools {
         };
       }
       case 'pieces': {
-        const limit = Math.max(1, Math.min(50, Number(input.limite) || 30));
-        const docs = (await this.host.list('document')).filter(d => !input.statut || d.data.status === input.statut);
+        const size = Math.max(1, Math.min(100, Number(input.taille) || 30));
+        const page = Math.max(1, Number(input.page) || 1);
+        const q = String(input.recherche || '').toLowerCase().slice(0, 200);
+        const docs = (await this.host.list('document')).filter(d => (!input.statut || d.data.status === input.statut) && (!input.role || (d.data.role || 'piece_comptable') === input.role)
+          && (!input.lot || d.data.lot === input.lot) && (!q || String(d.data.name || '').toLowerCase().includes(q)));
+        const slice = docs.slice((page - 1) * size, page * size);
+        const parRole: Record<string, number> = {}, parStatut: Record<string, number> = {};
+        for (const d of docs) { const r = d.data.role || 'piece_comptable'; parRole[r] = (parRole[r] || 0) + 1; parStatut[d.data.status] = (parStatut[d.data.status] || 0) + 1; }
         return {
-          summary: `${docs.length} pièce(s)${input.statut ? ' ' + input.statut : ''}`,
-          data: { total: docs.length, pieces: docs.slice(0, limit).map(d => ({ id: d.id, nom: d.data.name, statut: d.data.status, mode: d.data.mode, lignes: d.data.invoiceIds?.length || 0, erreurs: (d.data.errors || []).slice(0, 5), importeLe: d.data.createdAt, confiance: d.data.confidence })) },
+          summary: `${slice.length} document(s) sur ${docs.length}${input.statut ? ' ' + input.statut : ''}${input.role ? ' ' + input.role : ''} (page ${page})`,
+          data: { total: docs.length, page, taille: size, couvert: Math.min(docs.length, page * size), reste: Math.max(0, docs.length - page * size), parRole, parStatut,
+            pieces: slice.map(d => ({ id: d.id, nom: d.data.name, role: d.data.role || 'piece_comptable', roleChoisiPar: d.data.roleSource, statut: d.data.status, mode: d.data.mode, lignes: d.data.invoiceIds?.length || 0, erreurs: (d.data.errors || []).slice(0, 5), importeLe: d.data.createdAt, confiance: d.data.confidence,
+              indices: d.data.roleSuggestion?.indices?.slice(0, 3), periodes: d.data.periodes, identite: d.data.identite ? { ...d.data.identite, contradictoire: Boolean(d.data.identiteContradictoire) } : undefined, lot: d.data.lot || undefined })) },
         };
+      }
+      case 'capacites': {
+        const drive = this.host.driveSummary ? await this.host.driveSummary() : undefined;
+        return { summary: 'Catalogue des capacités', data: capabilitiesCatalog({ isAdmin: Boolean(this.host.isAdmin), aiLive: true, drive }) };
       }
       case 'journal': {
         const limit = Math.max(1, Math.min(50, Number(input.limite) || 20));
@@ -473,7 +523,8 @@ export class AssistantTools {
         return {
           summary: `${lots.length} import(s) en lot`,
           data: lots.slice(0, 10).map((l: any) => ({ id: l.id, source: l.data.source, nom: l.data.label, statut: l.data.status, pieces: l.data.total, traitees: l.data.processed, lignes: l.data.items.reduce((n: number, x: any) => n + (x.lines || 0), 0),
-            fichiers: l.data.items.slice(0, 50).map((x: any) => ({ nom: x.name, etat: x.state, lignes: x.lines, erreur: x.error || undefined })), ignores: l.data.skipped?.length || 0 })),
+            parEtat: l.data.items.reduce((acc: Record<string, number>, x: any) => ({ ...acc, [x.state]: (acc[x.state] || 0) + 1 }), {}), documentsDeReference: l.data.items.filter((x: any) => x.state === 'reference').length,
+            fichiers: l.data.items.slice(0, 50).map((x: any) => ({ nom: x.name, etat: x.state, role: x.role || undefined, lignes: x.lines, erreur: x.error || undefined, documentId: x.documentId || undefined })), fichiersAffiches: Math.min(50, l.data.items.length), ignores: l.data.skipped?.length || 0, note: l.data.items.length > 50 ? 'Liste tronquée : utiliser pieces avec le paramètre lot pour tout parcourir.' : undefined })),
         };
       }
       case 'designations': {
@@ -504,7 +555,7 @@ export class AssistantTools {
         return { summary: 'Identité de l’entreprise', data: { raisonSociale: c.name, ice: c.ice, identifiantFiscal: c.iff, regime: c.regime === 2 ? '2 — débits' : '1 — encaissement', ville: c.city, releveProductible: Boolean(c.name) && /^\d{1,10}$/.test(String(c.iff || '').trim()) } };
       }
       case 'corriger_ligne': case 'rattacher_periode': case 'rapprocher': case 'creer_snapshot': case 'relire_piece':
-      case 'confirmer_designation': case 'traiter_notification': case 'importer_dossier_drive': case 'generer_fichier': case 'generer_tableau':
+      case 'confirmer_designation': case 'traiter_notification': case 'importer_drive': case 'importer_dossier_drive': case 'generer_fichier': case 'generer_tableau':
         return this.act(name, input);
       case 'proposer_action':
         return this.propose(input);
@@ -536,10 +587,11 @@ export class AssistantTools {
       case 'relire_piece': resume = await a.relire(String(input.documentId || '')); break;
       case 'confirmer_designation': resume = await a.confirmerDesignation(Number(input.designationId)); break;
       case 'traiter_notification': resume = await a.traiterNotification(Number(input.notificationId)); break;
-      case 'importer_dossier_drive': {
-        const lot = await a.importerDrive(String(input.url || ''));
+      case 'importer_drive': case 'importer_dossier_drive': {
+        if (input.role !== undefined && !DOCUMENT_ROLES.includes(input.role)) throw new BadRequestException('Rôle documentaire inconnu.');
+        const lot = await a.importerDrive(String(input.url || ''), input.role);
         this.lotsEnCours.push(lot.lotId);
-        resume = `Import du dossier Drive « ${lot.nom} » lancé : ${lot.pieces} pièce(s)${lot.ignores ? `, ${lot.ignores} ignorée(s)` : ''}`;
+        resume = `Import Drive « ${lot.nom} » lancé : ${lot.pieces} fichier(s)${lot.ignores ? `, ${lot.ignores} ignoré(s)` : ''}${input.role ? ` (rôle imposé : ${input.role})` : ''}`;
         data = { ...lot, note: 'Import en arrière-plan : la demande sera reprise automatiquement à la fin. Termine ta réponse maintenant en l’annonçant.' };
         break;
       }
@@ -636,7 +688,7 @@ export class AssistantTools {
       action.mois = mois;
     } else if (input.type === 'importer_drive') {
       const url = String(input.url || '').trim();
-      if (!this.host.driveId?.(url)) throw new BadRequestException('Lien Google Drive non reconnu (drive.google.com/drive/folders/…).');
+      if (!this.host.driveId?.(url)) throw new BadRequestException('Lien Google Drive non reconnu : dossier (drive.google.com/drive/folders/…), fichier (…/file/d/…) ou feuille Google Sheets (…/spreadsheets/d/…).');
       action.url = url;
     } else if (input.type === 'creer_snapshot') {
       action.mois = this.month(input.mois);
@@ -680,7 +732,8 @@ const STEP_LABELS: Record<string, string> = {
   designations: 'Lecture des désignations', notifications: 'Lecture des notifications', snapshots: 'Lecture des snapshots',
   corriger_ligne: 'Correction d’une ligne', rattacher_periode: 'Rattachement au relevé', rapprocher: 'Rapprochement d’un paiement',
   creer_snapshot: 'Création du snapshot', relire_piece: 'Relecture d’une pièce', confirmer_designation: 'Confirmation d’une désignation',
-  traiter_notification: 'Traitement d’une notification', importer_dossier_drive: 'Import du dossier Drive', generer_fichier: 'Production du fichier',
+  traiter_notification: 'Traitement d’une notification', importer_drive: 'Import depuis Google Drive', importer_dossier_drive: 'Import depuis Google Drive', generer_fichier: 'Production du fichier',
+  capacites: 'Consultation des capacités',
   generer_tableau: 'Production du tableau',
   lire_piece: 'Lecture d’une pièce', entreprise: 'Lecture de l’entreprise',
 };

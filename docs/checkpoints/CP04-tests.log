@@ -1,0 +1,21 @@
+
+> waraqa-unified-backend@4.5.0 test:e2e
+> jest --config ./test/jest-e2e.json --runInBand --testPathPattern=document-roles|ia-live|releve-lot|online-drive
+
+PASS test/releve-lot.e2e-spec.ts (6.015 s)
+PASS test/ia-live.e2e-spec.ts (6.014 s)
+PASS test/document-roles.e2e-spec.ts
+PASS test/online-drive.e2e-spec.ts
+  ● Console
+
+    console.log
+      Warning: Indexing all PDF objects
+
+      at console (../node_modules/pdf-parse/lib/pdf.js/v1.10.100/build/webpack:/src/shared/util.js:276:5)
+
+
+Test Suites: 4 passed, 4 total
+Tests:       34 passed, 34 total
+Snapshots:   0 total
+Time:        17.191 s, estimated 18 s
+Ran all test suites matching /document-roles|ia-live|releve-lot|online-drive/i.

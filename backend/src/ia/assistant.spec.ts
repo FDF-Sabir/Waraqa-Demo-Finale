@@ -242,7 +242,7 @@ describe('Assistant comptable connecté (outils en lecture seule)', () => {
       await tools.run('generer_tableau', { format: 'xlsx', debut: '2026-07', fin: '2026-09', regrouperPar: 'fournisseur' });
       expect((await tools.run('generer_fichier', { format: 'docx' })).isError).toBe(true);
       expect((await tools.run('generer_tableau', { format: 'xlsx', debut: '2026-13' })).isError).toBe(true);
-      await tools.run('importer_dossier_drive', { url: 'https://drive.google.com/drive/folders/1AbCdEfGhIjKlMn' });
+      await tools.run('importer_drive', { url: 'https://drive.google.com/drive/folders/1AbCdEfGhIjKlMn' });
       expect(tools.livrables.map(l => l.nom)).toEqual(['Waraqa-releve-xml-2026-09.releve-xml', 'Waraqa-carburant-2026-09.xlsx']);
       expect(tools.lotsEnCours).toEqual(['lot-1']);
     });
