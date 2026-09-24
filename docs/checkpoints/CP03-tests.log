@@ -1,0 +1,23 @@
+
+> waraqa-unified-backend@4.5.0 test:e2e
+> jest --config ./test/jest-e2e.json --runInBand --testPathPattern=integrity
+
+PASS test/integrity.e2e-spec.ts (7.033 s)
+  Intégrité de finalisation
+    ✓ migrations versionnées et index persistants (3 ms)
+    ✓ rejette les éditions périmées et concurrentes (37 ms)
+    ✓ restaure une archive sans conserver sa revue (45 ms)
+    ✓ sépare les exemples des exports par défaut (147 ms)
+    ✓ sauvegarde incluant SQLite et originaux, restauration contrôlée (69 ms)
+    ✓ aperçu, mapping et reprise idempotente des lignes acceptées (138 ms)
+    ✓ paiements partiels et groupés, reliquat et annulation tracée (65 ms)
+    ✓ avoir relié et dates calendaires strictes (13 ms)
+    ✓ 2FA : enrôlement vérifié, révocation, secours à usage unique (1464 ms)
+    ✓ interdit sauvegarde et originaux sans session (22 ms)
+    ✓ ne permet pas à un comptable de télécharger tous les comptes (234 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       11 passed, 11 total
+Snapshots:   0 total
+Time:        7.303 s
+Ran all test suites matching /integrity/i.

@@ -24,7 +24,7 @@ Demande du 24/09/2026 : appliquer le plan directeur `00_PLAN_DIRECTEUR_WARAQA_IN
 |---|---|---|---|
 | CP01 — Baseline | L0 | Réalisé | `docs/checkpoints/CP01-*.log` : build OK, 121 unitaires, 100 e2e |
 | CP02 — Verrou de clôture commun | L1.4 | Réalisé | `backend/src/common/period-lock.ts` appliqué à PUT/PATCH /factures, création déclarée, archivage, liaison de pièce, affectation, annulation, rattachement, détachement, agent ; `backend/test/closed-period.e2e-spec.ts` (6 tests) ; `docs/checkpoints/CP02-tests.log` : 106 e2e verts |
-| CP03 — Sauvegarde complète | L1.5 | À faire | Livrables et boîte d'envoi Drive dans la sauvegarde ; restauration vérifiée |
+| CP03 — Sauvegarde complète | L1.5 | Réalisé | Format `waraqa-backup-2` (SQLite, originaux, livrables, boîte d'envoi) ; `scripts/restore.cjs` refuse un livrable référencé absent ; `docs/checkpoints/CP03-tests.log` |
 | CP04 — Rôles documentaires, contrat Drive, catalogue | L1.2, L1.3, L2.1 | À faire | Un modèle/historique/référentiel ne crée aucune ligne ; catalogue réel des capacités |
 | CP05 — Lecture des gros classeurs | L3.1 | À faire | Index + lecture par plages avec couverture ; plus de refus à 50 000 caractères |
 | CP06 — Précontrôle et plan de travail | L1.1, L8.1 | À faire | Blocages harmonisés UI/IA ; entonnoir À classer → Clôture |
@@ -37,4 +37,4 @@ Demande du 24/09/2026 : appliquer le plan directeur `00_PLAN_DIRECTEUR_WARAQA_IN
 
 ## Prochaine action exacte
 
-CP03 : étendre `backend/src/unified/backup.ts` aux dossiers `livrables/` et `drive-outbox/`, adapter `scripts/restore.cjs` (chemins autorisés, contrôle des livrables référencés), test dans `integrity.e2e-spec.ts`.
+CP04 : rôle documentaire (`backend/src/unified/document-role.ts`), stockage sans création de lignes pour modèle/historique/référentiel/évaluation, contrat Drive fichier/dossier/Sheets, outil `capacites`, tests.
