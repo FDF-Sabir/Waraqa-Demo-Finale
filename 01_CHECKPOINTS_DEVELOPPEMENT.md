@@ -31,10 +31,10 @@ Demande du 24/09/2026 : appliquer le plan directeur `00_PLAN_DIRECTEUR_WARAQA_IN
 | CP07 — Clôture versionnée | L5.3 | Réalisé | `releve_version` immuable (en-tête, lignes, écartées + contrôles, alertes, totaux, règles versionnées, empreintes XML/XLSX), export définitif depuis la version (`-vN`), réouverture avec motif conservant l'historique, routes `releve/versions` ; `releve-version.e2e-spec.ts` (3) ; `docs/checkpoints/CP07-tests.log` |
 | CP08 — Doublons explicables | L2.4 | Réalisé | Groupe de comparaison (critères communs / différences, pièces, décisions possibles) `GET /workspace/invoices/:id/doublon`, outil `comparer_doublons`, décision humaine `lever_doublon` (motif, journal, exemption respectée par la re-détection) ; `doublons-rapport.e2e-spec.ts` |
 | CP09 — Rapports rédactionnels | L3.4 | Réalisé | `report-pdf.ts` (Markdown → PDF paginé, métadonnées, sources et limites), outil `generer_rapport` (md + pdf livrés, tracés) ; `report-pdf.spec.ts`, `assistant.spec.ts`, `doublons-rapport.e2e-spec.ts` ; `docs/checkpoints/CP08-tests.log` |
-| CP10 — Orchestrateur fiable | L4.2, L4.3, L4.4 | À faire | Pagination avec couverture, provenance des corrections, missions persistées, bilan structuré |
+| CP10 — Orchestrateur fiable | L4.2–L4.5 | Réalisé | Provenance obligatoire + `expectedVersion` sur `corriger_ligne` (journal avant/après/source/version), idempotence des actions répétées, missions persistées (`mission-*`, checkpoints à chaque appel, statuts terminee/interrompue/echouee, outil `etat_mission`, route `GET /workspace/missions`), bilan structuré, réservation de budget libérée en toute issue ; `missions.e2e-spec.ts` (3) ; `docs/checkpoints/CP10-tests.log` |
 | CP11 — Interface pilotée | L8 | À faire | Cockpit, rôles à l'import, capacités, missions |
 | CP12 — Documentation et recette | L10 | À faire | Suite complète verte, version, manifeste |
 
 ## Prochaine action exacte
 
-CP10 : orchestrateur fiable — provenance obligatoire et `expectedVersion` sur `corriger_ligne`, idempotence des actions répétées dans une réponse, missions persistées (`mission-*`, outil `etat_mission`, route `GET /workspace/missions`), bilan structuré dans la réponse, réservation de budget.
+CP11 : interface pilotée — tableau de bord (plan de travail + précontrôle avec actions et invites IA), page Relevé (blocages, versions, motif de réouverture), page Import (rôles, reclassement, identité contradictoire, rôle au dépôt), chat (rôle des pièces jointes, catalogue des capacités, bilan, missions).

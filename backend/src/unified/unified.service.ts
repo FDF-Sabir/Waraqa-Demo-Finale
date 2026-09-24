@@ -9,7 +9,7 @@ import { driveIdFromLink, IntegrationsService } from "./integrations.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { DesignationsService } from "../designations/designations.service";
 import { ModifierFactureDto } from "../factures/dto/modifier-facture.dto";
-import { CHAMPS_CORRIGEABLES, COLONNES_TABLEAU, type AgentActions, type Livrable } from "../ia/assistant";
+import { CHAMPS_CORRIGEABLES, COLONNES_TABLEAU, type AgentActions, type CorrectionSource, type Livrable } from "../ia/assistant";
 import { aliasFor, readSheetRows, toIsoDate } from "./table-import";
 import { construireReleve, releveXlsx, releveXml, ReleveHeader, TAUX_DEDUCTIBLES, LigneReleve } from "./releve";
 import { ACCEPTED, extractZip, unsupportedReason } from "./archive-import";
@@ -1246,17 +1246,25 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
   private agentActions(owner: UtilisateurEntity, conversationId: string): AgentActions {
     const agent = { sub: owner.id, nom: `Agent IA (pour ${owner.nom})` };
     return {
-      corriger: async (factureId, champs, justification) => {
+      corriger: async (factureId, champs, justification, source: CorrectionSource, expectedVersion) => {
         const f = await this.factures.trouver(factureId);
         if (f.archivee) throw new BadRequestException(`Ligne #${factureId} archivée.`);
         await assertLineOpen(this.invoices.manager, f, 'la correction');
-        const dto = plainToInstance(ModifierFactureDto, champs);
+        // Provenance : une pièce ou un classeur cités doivent exister ; la pièce source de la ligne est notée si elle diffère.
+        let sourceNom: string | undefined;
+        if (source?.documentId) {
+          const doc = await this.records.findOneBy({ id: source.documentId, kind: "document" });
+          if (!doc) throw new BadRequestException(`Source introuvable : document ${source.documentId}.`);
+          sourceNom = doc.data.name;
+        }
+        if (expectedVersion !== undefined && expectedVersion !== f.version) throw new ConflictException(`Ligne #${factureId} modifiée depuis sa lecture (version ${f.version}, lue ${expectedVersion}) : relis-la avant de corriger.`);
+        const dto = plainToInstance(ModifierFactureDto, { ...champs, expectedVersion: f.version });
         const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: true });
         if (errors.length) throw new BadRequestException("Valeur invalide : " + errors.map((e) => e.property).join(", "));
         const avant = Object.fromEntries(Object.keys(champs).map((k) => [k, (f as any)[k] ?? null]));
         const apres = await this.factures.modifier(factureId, dto, { utilisateurId: owner.id, saisiPar: agent.nom });
-        await this.journal.ecrire({ action: "correction_agent", factureId, utilisateurId: owner.id, saisiPar: agent.nom, details: { avant, apres: Object.fromEntries(Object.keys(champs).map((k) => [k, (apres as any)[k] ?? null])), justification } });
-        return `#${factureId} corrigée (${Object.keys(champs).join(", ")}) — ${apres.statut === "validee" ? "complète" : "encore incomplète : " + (apres.champsManquants || []).join(", ")}`;
+        await this.journal.ecrire({ action: "correction_agent", factureId, utilisateurId: owner.id, saisiPar: agent.nom, details: { avant, apres: Object.fromEntries(Object.keys(champs).map((k) => [k, (apres as any)[k] ?? null])), justification, source: { ...source, nom: sourceNom, pieceDeLaLigne: f.documentId || null, coherente: !source?.documentId || !f.documentId || source.documentId === f.documentId }, versionLue: expectedVersion ?? f.version, versionApres: apres.version } });
+        return `#${factureId} corrigée (${Object.keys(champs).join(", ")}) d’après ${source.type}${sourceNom ? " « " + sourceNom + " »" : ""}${source.reference ? " (" + source.reference + ")" : ""} — ${apres.statut === "validee" ? "complète" : "encore incomplète : " + (apres.champsManquants || []).join(", ")}`;
       },
       rattacher: async (ids, mois) => {
         const r = await this.releveAttach(ids, mois, agent);
@@ -1616,11 +1624,21 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     this.usageLock = task.catch(() => undefined);
     await task;
   }
-  async assertBudget(settings?: any) {
+  /** Réservations de budget des appels en cours (plan L4.5) : la concurrence ne peut pas dépasser le plafond. */
+  private reservedUsd = 0;
+  /** Estimation prudente du coût d'un appel avant de le lancer (entrée ~30 000 tokens, sortie maximale). */
+  estimateCall(model: string, maxOutput = 8000) { return cost({ input_tokens: 30_000, output_tokens: maxOutput }, model); }
+  async assertBudget(settings?: any, reserve = 0) {
     const s = settings || (await this.settings());
     const u = await this.iaUsage();
-    if (u.costUsd >= s.ai.monthlyBudgetUsd)
-      throw new BadRequestException(`Budget IA mensuel atteint (${u.costUsd.toFixed(2)} / ${s.ai.monthlyBudgetUsd} USD). Augmentez-le dans Réglages → Assistant IA ou attendez le mois prochain.`);
+    if (u.costUsd + this.reservedUsd + reserve > s.ai.monthlyBudgetUsd || u.costUsd >= s.ai.monthlyBudgetUsd)
+      throw new BadRequestException(`Budget IA mensuel atteint (${u.costUsd.toFixed(2)} consommés${this.reservedUsd ? ` + ${this.reservedUsd.toFixed(2)} réservés par les appels en cours` : ""} / ${s.ai.monthlyBudgetUsd} USD). Augmentez-le dans Réglages → Assistant IA ou attendez le mois prochain.`);
+  }
+  /** Missions de l'utilisateur (une par réponse de l'agent), de la plus récente à la plus ancienne. */
+  async missions(userId: number, limit = 10, conversationId?: string) {
+    return (await this.list("mission")).filter((m) => m.data.userId === userId && (!conversationId || m.data.conversationId === conversationId))
+      .sort((a, b) => String(b.data.startedAt).localeCompare(String(a.data.startedAt))).slice(0, Math.max(1, Math.min(50, limit)))
+      .map((m) => ({ id: m.id, ...m.data }));
   }
   async chatProgressFor(id: string, user: any) {
     await this.conversation(id, user);
@@ -1693,6 +1711,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       driveSummary: () => this.drive.summary(),
       precontrole: (m: string) => this.precontrole(m),
       duplicates: (id: number) => this.duplicateGroup(id),
+      missions: (limit?: number) => (userId ? this.missions(userId, limit) : Promise.resolve([])),
       plan: (m: string) => this.planTravail(m),
     };
   }
@@ -1766,7 +1785,19 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     const usage = { calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0 };
     const today = new Intl.DateTimeFormat("fr-FR", { timeZone: settings.integrations.timeZone || "Africa/Casablanca", dateStyle: "full" }).format(new Date());
     this.chatProgress.set(id, []);
-    const answer = await runAssistant({
+    // Mission persistée : intention, étapes, actions et fichiers survivent à une coupure ; jamais le raisonnement privé du modèle.
+    const missionId = "mission-" + randomUUID();
+    const mission: any = { conversationId: id, userId: c.data.userId, month: c.data.month, question: text.slice(0, 500), documentIds: ids, status: "en_cours", startedAt: now(), steps: [] as string[], outils: [] as any[], executees: [] as any[], livrables: [] as any[], actions: 0, costUsd: 0, calls: 0 };
+    const checkpoint = async (patch: any = {}) => {
+      Object.assign(mission, { steps: this.chatProgress.get(id) || mission.steps, outils: tools.traces.map((t) => ({ nom: t.name, resume: t.summary, tronque: t.truncated || undefined })), executees: tools.executees, livrables: tools.livrables, actions: tools.actions.length, lots: tools.lotsEnCours, costUsd: usage.costUsd, calls: usage.calls, updatedAt: now() }, patch);
+      await this.save(missionId, "mission", mission).catch(() => undefined);
+    };
+    await checkpoint();
+    const estimate = this.estimateCall(settings.ai.model);
+    let reserved = 0;
+    let answer: { text: string; truncated: boolean };
+    try {
+    answer = await runAssistant({
       gateway: new IaGateway(apiKey()),
       model: settings.ai.model,
       effort: settings.ai.effort,
@@ -1778,8 +1809,9 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       messages: history,
       tools,
       signal: this.chatAbort.get(id)?.signal,
-      beforeCall: () => this.assertBudget(settings),
+      beforeCall: async () => { await this.assertBudget(settings, estimate); this.reservedUsd += estimate; reserved += estimate; },
       onUsage: async (u, model) => {
+        this.reservedUsd = Math.max(0, this.reservedUsd - estimate); reserved = Math.max(0, reserved - estimate);
         const usd = await this.recordUsage("chat", u, model);
         usage.calls++;
         usage.inputTokens += u.input_tokens || 0;
@@ -1787,9 +1819,18 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
         usage.cacheReadTokens += u.cache_read_input_tokens || 0;
         usage.cacheWriteTokens += u.cache_creation_input_tokens || 0;
         usage.costUsd = Math.round((usage.costUsd + usd) * 1e6) / 1e6;
+        await checkpoint();
       },
-      onStep: (label) => this.chatProgress.get(id)?.push(label),
+      onStep: (label) => { this.chatProgress.get(id)?.push(label); },
     });
+    } catch (e: any) {
+      await checkpoint({ status: this.chatAbort.get(id)?.signal.aborted ? "interrompue" : "echouee", finishedAt: now(), erreur: String(e?.message || "Échec").slice(0, 300) });
+      throw e;
+    } finally {
+      // Réservation libérée même en cas d'échec ou d'annulation.
+      this.reservedUsd = Math.max(0, this.reservedUsd - reserved);
+    }
+    await checkpoint({ status: answer.truncated ? "interrompue" : "terminee", finishedAt: now(), reponse: answer.text.slice(0, 1000) });
     let content = answer.text;
     if (answer.truncated) content += "\n\n_Réponse interrompue (limite de longueur ou d’étapes) : posez une question plus ciblée pour compléter._";
     const result = {
@@ -1799,6 +1840,8 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       livrables: tools.livrables,
       lotsEnCours: tools.lotsEnCours,
       sources: tools.traces.map((t) => ({ name: t.name, summary: t.summary, truncated: t.truncated })),
+      bilan: tools.bilan(),
+      missionId,
       truncated: answer.truncated,
       model: settings.ai.model,
     };

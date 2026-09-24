@@ -1,0 +1,12 @@
+
+> waraqa-unified-backend@4.5.0 test:e2e
+> jest --config ./test/jest-e2e.json --runInBand --testPathPattern=missions|ia-live
+
+PASS test/missions.e2e-spec.ts (5.64 s)
+PASS test/ia-live.e2e-spec.ts (6.383 s)
+
+Test Suites: 2 passed, 2 total
+Tests:       16 passed, 16 total
+Snapshots:   0 total
+Time:        12.283 s
+Ran all test suites matching /missions|ia-live/i.

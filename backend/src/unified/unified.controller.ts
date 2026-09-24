@@ -55,6 +55,7 @@ export class UnifiedController {
   @UseGuards(JwtAuthGuard) @Post('ai/test') aiTest(@UtilisateurCourant() u:any) {return this.service.testAi(u);}
   @UseGuards(JwtAuthGuard) @Get('conversations/:id/progress') chatProgress(@Param('id') id:string,@UtilisateurCourant() u:any) {return this.service.chatProgressFor(id,u);}
   @UseGuards(JwtAuthGuard) @Get('readiness') readiness() {return this.service.readiness();}
+  @UseGuards(JwtAuthGuard) @Get('missions') missions(@UtilisateurCourant() u:any,@Query('limit') limit?:string,@Query('conversationId') conversationId?:string) {return this.service.missions(u.sub,Number(limit||10),conversationId||undefined);}
   @Get("status") status() {
     return this.service.status();
   }

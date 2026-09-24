@@ -31,6 +31,7 @@ export interface AssistantHost {
   company?(): Promise<any>;
   driveId?(url: string): string | null;
   precontrole?(month: string): Promise<any>;
+  missions?(limit?: number): Promise<any[]>;
   duplicates?(id: number): Promise<any>;
   plan?(month: string): Promise<any>;
   driveSummary?(): Promise<{ configured: boolean; authorized: boolean; needsReauth: boolean; canRead: boolean; email: string | null }>;
@@ -39,8 +40,9 @@ export interface AssistantHost {
 }
 
 export interface Livrable { id: string; nom: string; format: string; taille: number }
+export interface CorrectionSource { type: 'piece' | 'utilisateur' | 'classeur' | 'autre_ligne'; documentId?: string; reference?: string }
 export interface AgentActions {
-  corriger(factureId: number, champs: Record<string, unknown>, justification: string): Promise<string>;
+  corriger(factureId: number, champs: Record<string, unknown>, justification: string, source: CorrectionSource, expectedVersion?: number): Promise<string>;
   rattacher(factureIds: number[], mois: string): Promise<string>;
   rapprocher(paymentId: number, invoiceId: number, montant?: number): Promise<string>;
   snapshot(mois: string): Promise<string>;
@@ -225,8 +227,18 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: 'corriger_ligne',
-    description: 'AGIT : corrige une ligne mal lue ou incomplète quand la pièce (lire_piece) ou l’utilisateur donne la bonne valeur. Champs possibles : factNum, designation, libFrss, iceFrs, iff, mTtc, taux, idPaie, datePaie (AAAA-MM-JJ), dateFac, sousType. HT/TVA sont recalculés par le serveur ; la ligne repasse « à revoir ». Valeurs avant/après tracées au journal.',
-    input_schema: { type: 'object', properties: { factureId: { type: 'integer' }, champs: { type: 'object', description: 'Ex. { "iceFrs": "001234567000012" }' }, justification: { type: 'string', description: 'Source de la correction (pièce, demande de l’utilisateur).' } }, required: ['factureId', 'champs', 'justification'], additionalProperties: false },
+    description: 'AGIT : corrige une ligne mal lue ou incomplète quand la pièce (lire_piece / lire_plage) ou l’utilisateur donne la bonne valeur. Champs possibles : factNum, designation, libFrss, iceFrs, iff, mTtc, taux, idPaie, datePaie (AAAA-MM-JJ), dateFac, sousType. PROVENANCE obligatoire (source : piece + documentId lu, classeur + référence de cellule, utilisateur = demande explicite, autre_ligne) et expectedVersion = version lue dans detail_ligne/rechercher_lignes (refus si la ligne a changé entre-temps). HT/TVA recalculés par le serveur ; la ligne repasse « à revoir » ; avant/après, source et version tracés au journal.',
+    input_schema: { type: 'object', properties: {
+      factureId: { type: 'integer' }, champs: { type: 'object', description: 'Ex. { "iceFrs": "001234567000012" }' },
+      justification: { type: 'string', description: 'Ce que la source établit, en une phrase.' },
+      source: { type: 'object', properties: { type: { type: 'string', enum: ['piece', 'utilisateur', 'classeur', 'autre_ligne'] }, documentId: { type: 'string', description: 'Identifiant de la pièce ou du classeur lu.' }, reference: { type: 'string', description: 'Localisation : page, cellule (EDI!I12), ligne #id, ou citation courte.' } }, required: ['type'], additionalProperties: false },
+      expectedVersion: { type: 'integer', description: 'Version de la ligne telle que lue.' },
+    }, required: ['factureId', 'champs', 'justification', 'source'], additionalProperties: false },
+  },
+  {
+    name: 'etat_mission',
+    description: 'Missions récentes de l’utilisateur (chaque réponse de l’agent = une mission persistée) : question, statut (en_cours, terminee, interrompue, echouee), étapes et outils consultés, actions réellement exécutées, fichiers produits, coût. Utiliser pour reprendre un travail interrompu sans refaire les actions déjà réussies.',
+    input_schema: { type: 'object', properties: { limite: { type: 'integer', description: '20 maximum.' } }, additionalProperties: false },
   },
   {
     name: 'rattacher_periode',
@@ -342,7 +354,8 @@ export const ASSISTANT_RULES = `Tu es Waraqa, l’assistant du comptable de l’
 - Le comptable te confie ses pièces (ZIP, dossier Drive, fichiers) et te dit ce qu’il veut. Enchaîne toi-même les traitements avec les outils marqués « AGIT » : importer un dossier Drive, relire une pièce, corriger une ligne mal lue d’après sa pièce, rattacher les déductions tardives, rapprocher les paiements évidents, confirmer les désignations, créer un snapshot, produire les fichiers et tableaux demandés.
 - Livraison : chaque fichier demandé se produit avec generer_fichier ou generer_tableau (données) ou generer_rapport (analyse rédigée, Markdown/PDF) et apparaît en téléchargement sous ta réponse. Un fichier par format demandé. Format inexistant (ex. Word) : dis-le et livre le plus proche (PDF, Excel, CSV, JSON ou Markdown).
 - Doublons : explique le groupe avec comparer_doublons ; la décision (lever_doublon avec le motif, ou archiver_ligne) appartient au comptable via proposer_action ; ne supprime ni ne fusionne jamais.
-- Corrige seulement ce que la pièce ou l’utilisateur établit clairement ; en cas de doute, signale la ligne au lieu de deviner. Cite la justification.
+- Corrige seulement ce que la pièce ou l’utilisateur établit clairement ; en cas de doute, signale la ligne au lieu de deviner. Chaque correction porte sa provenance (source : pièce lue + identifiant, cellule du classeur, demande de l’utilisateur) et la version de la ligne telle que lue (expectedVersion).
+- Une action identique répétée dans la même réponse n’est pas rejouée (résultat réutilisé) ; après une interruption, consulte etat_mission pour ne pas refaire ce qui a réussi.
 - Rends compte à la fin : ce que tu as fait (actions et nombres), ce qui reste à vérifier, fichiers livrés.
 
 ## Ce qui reste au comptable (2 validations)
@@ -391,7 +404,7 @@ function compact(f: FactureEntity) {
   return {
     id: f.id, factNum: f.factNum, designation: f.designation, libFrss: f.libFrss, iceFrs: f.iceFrs, iff: f.iff,
     mHt: f.mHt, tva: f.tva, mTtc: f.mTtc, taux: f.taux, idPaie: f.idPaie, dateFac: f.dateFac, datePaie: f.datePaie,
-    sousType: f.sousType, statut: f.statut, champsManquants: f.champsManquants?.length ? f.champsManquants : undefined,
+    sousType: f.sousType, statut: f.statut, version: f.version, champsManquants: f.champsManquants?.length ? f.champsManquants : undefined,
     revueHumaine: f.revueHumaine, doublonDe: f.doublonDe ?? undefined, vigilance: f.vigilanceRenforcee || undefined,
     rapprocheeA: f.rapprocheeA ?? undefined, demonstration: f.demonstration || undefined, pieceSource: f.documentId ? true : undefined,
   };
@@ -542,6 +555,10 @@ export class AssistantTools {
         const p = await this.host.plan(month);
         return { summary: `Plan de travail ${month} : ${p.etapes.map((e: any) => `${e.libelle} ${e.nombre}`).join(', ')}`, data: p };
       }
+      case 'etat_mission': {
+        const list = this.host.missions ? await this.host.missions(Math.max(1, Math.min(20, Number(input.limite) || 5))) : [];
+        return { summary: `${list.length} mission(s)`, data: { missions: list } };
+      }
       case 'comparer_doublons': {
         if (!this.host.duplicates) throw new BadRequestException('Comparaison indisponible.');
         const g = await this.host.duplicates(Number(input.id));
@@ -631,10 +648,15 @@ export class AssistantTools {
     }
   }
 
+  /** Clé d'idempotence : la même action avec les mêmes paramètres, répétée dans une réponse, n'est pas rejouée. */
+  private readonly done = new Map<string, { data: any; summary: string }>();
   /** Exécution directe (opérations réversibles) : le serveur applique ses contrôles habituels. */
   private async act(name: string, input: any): Promise<{ data: any; summary: string }> {
     const a = this.host.act;
     if (!a) throw new BadRequestException('Actions de l’agent indisponibles.');
+    const key = name + ':' + JSON.stringify(input, Object.keys(input || {}).sort());
+    const previous = this.done.get(key);
+    if (previous) return { summary: previous.summary + ' (déjà fait)', data: { ...previous.data, dejaExecute: true, note: 'Action identique déjà exécutée dans cette réponse : résultat réutilisé, aucun double effet.' } };
     if (this.executees.length >= 300) throw new BadRequestException('300 actions maximum par réponse : poursuivez dans un nouveau message.');
     const ids = (v: any) => (Array.isArray(v) ? v.map(Number).filter(Number.isInteger) : []);
     let resume: string, data: any;
@@ -645,7 +667,13 @@ export class AssistantTools {
         if (!Object.keys(champs).length || inconnus.length) throw new BadRequestException('Champs corrigeables : ' + CHAMPS_CORRIGEABLES.join(', ') + (inconnus.length ? ` (refusés : ${inconnus.join(', ')})` : ''));
         const justification = String(input.justification || '').trim().slice(0, 300);
         if (justification.length < 3) throw new BadRequestException('Justification requise.');
-        resume = await a.corriger(Number(input.factureId), champs, justification);
+        const src = input.source && typeof input.source === 'object' ? input.source : null;
+        if (!src || !['piece', 'utilisateur', 'classeur', 'autre_ligne'].includes(src.type)) throw new BadRequestException('Provenance requise : source.type = piece (avec documentId), classeur (documentId + cellule), utilisateur ou autre_ligne.');
+        if (['piece', 'classeur'].includes(src.type) && !src.documentId) throw new BadRequestException('source.documentId requis pour une correction fondée sur une pièce ou un classeur.');
+        const source: CorrectionSource = { type: src.type, documentId: src.documentId ? String(src.documentId) : undefined, reference: src.reference ? String(src.reference).slice(0, 200) : undefined };
+        const expectedVersion = input.expectedVersion === undefined ? undefined : Number(input.expectedVersion);
+        if (expectedVersion !== undefined && !Number.isInteger(expectedVersion)) throw new BadRequestException('expectedVersion : entier.');
+        resume = await a.corriger(Number(input.factureId), champs, justification, source, expectedVersion);
         break;
       }
       case 'rattacher_periode': resume = await a.rattacher(ids(input.factureIds), this.month(input.mois)); break;
@@ -691,7 +719,17 @@ export class AssistantTools {
       default: throw new BadRequestException('Outil inconnu.');
     }
     this.executees.push({ outil: name, resume });
-    return { summary: resume, data: data || { fait: true, resultat: resume } };
+    const result = { summary: resume, data: data || { fait: true, resultat: resume } };
+    this.done.set(key, result);
+    return result;
+  }
+  /** Bilan structuré d'une réponse : ce qui a été consulté, exécuté, livré, proposé, et ce qui reste partiel. */
+  bilan() {
+    const outils = [...new Set(this.traces.map(t => t.name))];
+    return {
+      etapes: this.traces.length, outils, tronques: [...new Set(this.traces.filter(t => t.truncated).map(t => t.name))], erreurs: this.traces.filter(t => /^Erreur/.test(t.summary)).length,
+      actions: this.executees.length, fichiers: this.livrables.length, propositions: this.actions.length, importsLances: this.lotsEnCours.length,
+    };
   }
 
   private async propose(input: any): Promise<{ data: any; summary: string }> {
@@ -811,7 +849,7 @@ const STEP_LABELS: Record<string, string> = {
   pieces: 'Lecture des pièces', journal: 'Lecture du journal', proposer_action: 'Préparation des actions',
   releve_deduction: 'Contrôle du relevé de déduction', imports: 'Suivi des imports',
   designations: 'Lecture des désignations', notifications: 'Lecture des notifications', snapshots: 'Lecture des snapshots',
-  corriger_ligne: 'Correction d’une ligne', rattacher_periode: 'Rattachement au relevé', rapprocher: 'Rapprochement d’un paiement',
+  corriger_ligne: 'Correction d’une ligne', etat_mission: 'Lecture des missions', rattacher_periode: 'Rattachement au relevé', rapprocher: 'Rapprochement d’un paiement',
   creer_snapshot: 'Création du snapshot', relire_piece: 'Relecture d’une pièce', confirmer_designation: 'Confirmation d’une désignation',
   traiter_notification: 'Traitement d’une notification', importer_drive: 'Import depuis Google Drive', importer_dossier_drive: 'Import depuis Google Drive', generer_fichier: 'Production du fichier',
   capacites: 'Consultation des capacités', precontroler_releve: 'Précontrôle de la période', plan_de_travail: 'Plan de travail',

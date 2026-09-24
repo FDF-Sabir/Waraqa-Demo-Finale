@@ -230,11 +230,19 @@ describe('Assistant comptable connecté (outils en lecture seule)', () => {
     it('corrige seulement les champs autorisés, avec justification ; les actions sont tracées', async () => {
       const a = act();
       const tools = new AssistantTools({ ...host(rows), act: a } as any, '2026-09');
-      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { mHt: 1 }, justification: 'x pièce' })).content).toContain('refusés : mHt');
-      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { iceFrs: '001' }, justification: '' })).isError).toBe(true);
-      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { iceFrs: '001234567000099' }, justification: 'ICE lu sur la pièce' })).isError).toBeUndefined();
-      expect(a.corriger).toHaveBeenCalledWith(2, { iceFrs: '001234567000099' }, 'ICE lu sur la pièce');
+      const src = { type: 'piece', documentId: 'doc-1', reference: 'page 1' };
+      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { mHt: 1 }, justification: 'x pièce', source: src })).content).toContain('refusés : mHt');
+      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { iceFrs: '001' }, justification: '', source: src })).isError).toBe(true);
+      // Provenance obligatoire : sans source, ou pièce citée sans identifiant, la correction est refusée.
+      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { iceFrs: '001234567000099' }, justification: 'ICE lu' })).content).toContain('Provenance requise');
+      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { iceFrs: '001234567000099' }, justification: 'ICE lu', source: { type: 'piece' } })).content).toContain('documentId requis');
+      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { iceFrs: '001234567000099' }, justification: 'ICE lu sur la pièce', source: src, expectedVersion: 3 })).isError).toBeUndefined();
+      expect(a.corriger).toHaveBeenCalledWith(2, { iceFrs: '001234567000099' }, 'ICE lu sur la pièce', src, 3);
       expect(tools.executees).toEqual([{ outil: 'corriger_ligne', resume: '#2 corrigée (iceFrs)' }]);
+      // Idempotence : la même action répétée dans la réponse n'est pas rejouée.
+      const again = JSON.parse((await tools.run('corriger_ligne', { factureId: 2, champs: { iceFrs: '001234567000099' }, justification: 'ICE lu sur la pièce', source: src, expectedVersion: 3 })).content);
+      expect(again.dejaExecute).toBe(true); expect(a.corriger).toHaveBeenCalledTimes(1); expect(tools.executees).toHaveLength(1);
+      expect(tools.bilan()).toEqual(expect.objectContaining({ actions: 1, fichiers: 0, propositions: 0 }));
     });
     it('fichiers et tableaux livrés ; import Drive noté pour reprise', async () => {
       const tools = new AssistantTools({ ...host(rows), act: act() } as any, '2026-09');
