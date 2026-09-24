@@ -1,0 +1,28 @@
+
+> waraqa-unified-backend@4.5.0 test:e2e
+> jest --config ./test/jest-e2e.json --runInBand --testPathPatterns=closed-period|integrity|releve-lot
+
+PASS test/closed-period.e2e-spec.ts (5.473 s)
+PASS test/online-drive.e2e-spec.ts
+  ● Console
+
+    console.log
+      Warning: Indexing all PDF objects
+
+      at console (../node_modules/pdf-parse/lib/pdf.js/v1.10.100/build/webpack:/src/shared/util.js:276:5)
+
+PASS test/ia-live.e2e-spec.ts (7.645 s)
+PASS test/integrity.e2e-spec.ts
+PASS test/app.e2e-spec.ts
+PASS test/archive-pdf.e2e-spec.ts
+PASS test/releve-lot.e2e-spec.ts
+PASS test/frontend-compat.e2e-spec.ts
+PASS test/notifications.e2e-spec.ts
+PASS test/unified-scheduler.e2e-spec.ts
+PASS test/ocr.e2e-spec.ts
+
+Test Suites: 11 passed, 11 total
+Tests:       106 passed, 106 total
+Snapshots:   0 total
+Time:        31.238 s
+Ran all test suites.

@@ -4,6 +4,7 @@ import { IaGateway } from "../ocr/ia-gateway";
 import { apiKey, cost, KEY_PATTERN, maskedKey, MODEL_PRESETS, workspaceId, writeEnv } from "../ia/ia-config";
 import { ASSISTANT_RULES, AssistantTools, runAssistant } from "../ia/assistant";
 import { onlineProfile, profile } from "../common/profile";
+import { assertLineOpen, assertMonthOpen, closureId } from "../common/period-lock";
 import { driveIdFromLink, IntegrationsService } from "./integrations.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { DesignationsService } from "../designations/designations.service";
@@ -495,6 +496,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
   }
   async archive(id: number, user: any) {
     const row = await this.factures.trouver(id);
+    await assertLineOpen(this.invoices.manager, row, 'l’archivage');
     if ((await this.allocations()).some(a=>!a.data.cancelled && (a.data.paymentId===id || a.data.invoiceId===id))) throw new ConflictException('Annulez les affectations avant archivage.');
     row.archivee = true;
     row.revueHumaine = false;
@@ -509,6 +511,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
   async linkDocument(id: number, documentId: string) {
     const doc = await this.get(documentId, "document");
     const row = await this.factures.trouver(id);
+    await assertLineOpen(this.invoices.manager, row, 'la liaison d’une pièce');
     if (row.documentId && row.documentId !== documentId)
       throw new BadRequestException(
         "Cette ligne possède déjà une pièce source.",
@@ -963,6 +966,8 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     try {
       if (paymentId === invoiceId) throw new BadRequestException('Choisissez deux lignes distinctes.');
       const payment = await this.factures.trouver(paymentId), invoice = await this.factures.trouver(invoiceId);
+      await assertLineOpen(this.invoices.manager, invoice, 'l’affectation d’un paiement');
+      await assertLineOpen(this.invoices.manager, payment, 'l’affectation');
       const allocations = (await this.allocations()).filter(a=>!a.data.cancelled);
       const paid = allocations.filter(a=>a.data.paymentId===paymentId).reduce((n,a)=>n+a.data.cents,0);
       const received = allocations.filter(a=>a.data.invoiceId===invoiceId).reduce((n,a)=>n+a.data.cents,0);
@@ -986,6 +991,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     try {
       const a = await this.get(id,'allocation');
       if (a.data.cancelled) throw new ConflictException('Affectation déjà annulée.');
+      await assertLineOpen(this.invoices.manager, await this.factures.trouver(a.data.invoiceId), 'l’annulation d’une affectation');
       const siblings=(await this.allocations()).filter(x=>!x.data.cancelled && x.data.invoiceId===a.data.invoiceId).sort((x,y)=>x.data.createdAt.localeCompare(y.data.createdAt));
       const first=siblings[0] || a;
       a.data.cancelled=now();a.data.reason=reason;
@@ -1148,7 +1154,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       corriger: async (factureId, champs, justification) => {
         const f = await this.factures.trouver(factureId);
         if (f.archivee) throw new BadRequestException(`Ligne #${factureId} archivée.`);
-        if (f.fiscalMonth && (await this.records.findOneBy({ id: "releve-cloture-" + f.fiscalMonth }))) throw new ConflictException(`Ligne #${factureId} déclarée dans un relevé clôturé.`);
+        await assertLineOpen(this.invoices.manager, f, 'la correction');
         const dto = plainToInstance(ModifierFactureDto, champs);
         const errors = await validate(dto, { whitelist: true, forbidNonWhitelisted: true });
         if (errors.length) throw new BadRequestException("Valeur invalide : " + errors.map((e) => e.property).join(", "));
@@ -1315,10 +1321,11 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
   /** Rattache des lignes (déductions tardives, délai d'un an) à une période de déclaration. */
   async releveAttach(ids: unknown, month: string, user: any) {
     if (!Array.isArray(ids) || !ids.length || ids.length > 1000 || ids.some((x) => !Number.isInteger(x))) throw new BadRequestException("Lignes à rattacher invalides.");
-    if ((await this.records.findOneBy({ id: "releve-cloture-" + month }))) throw new ConflictException(`Relevé ${month} clôturé : rouvrez-le avant de le modifier.`);
+    await assertMonthOpen(this.invoices.manager, month, 'd’y rattacher des lignes');
     for (const id of ids as number[]) {
       const f = await this.factures.trouver(id);
       if (f.fiscalMonth === month) continue;
+      await assertLineOpen(this.invoices.manager, f, 'le changement de période');
       await this.invoices.update(id, { fiscalMonth: month });
       await this.journal.ecrire({ action: "ligne_rattachee_periode", factureId: id, ...this.actor(user), details: { avant: f.fiscalMonth || null, apres: month } });
     }
@@ -1326,7 +1333,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
   }
   async releveDetach(id: number, user: any) {
     const f = await this.factures.trouver(id);
-    if (f.fiscalMonth && (await this.records.findOneBy({ id: "releve-cloture-" + f.fiscalMonth }))) throw new ConflictException(`Relevé ${f.fiscalMonth} clôturé : rouvrez-le avant de le modifier.`);
+    await assertLineOpen(this.invoices.manager, f, 'le détachement de la période');
     await this.invoices.update(id, { fiscalMonth: null as any });
     await this.journal.ecrire({ action: "ligne_detachee_periode", factureId: id, ...this.actor(user), details: { avant: f.fiscalMonth || null } });
     return { ok: true };

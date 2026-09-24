@@ -1,4 +1,5 @@
 import { dateIsoValide } from "../common/date-validation";
+import { assertLineOpen, assertMonthOpen } from "../common/period-lock";
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -80,6 +81,7 @@ export class FacturesService {
    */
   async validerLigne(id: number, auteur: AuteurAction): Promise<FactureEntity> {
     const facture = await this.trouver(id);
+    await assertLineOpen(this.repo.manager, facture, 'la revue');
 
     if (facture.statut !== StatutFacture.VALIDEE || facture.doublonDe || facture.archivee) {
       throw new BadRequestException('Corrigez les champs manquants et le doublon avant validation.');
@@ -114,6 +116,7 @@ export class FacturesService {
     }
 
     if (!dateIsoValide(dto.dateFac) || !dateIsoValide(dto.datePaie)) throw new BadRequestException('Date inexistante.');
+    await assertMonthOpen(this.repo.manager, dto.fiscalMonth, 'd’y déclarer une nouvelle ligne');
     if (dto.creditOf) {
       const original = await this.trouver(dto.creditOf);
       if (original.archivee || original.creditOf || !original.mTtc || original.mTtc <= 0 || [SousType.RELEVE_BANCAIRE, SousType.AVIS_DEBIT_VIREMENT].includes(original.sousType)) throw new BadRequestException('Facture source d’avoir invalide.');
@@ -239,6 +242,9 @@ export class FacturesService {
     auteur: AuteurAction,
   ): Promise<FactureEntity> {
     const facture = await this.trouver(id);
+    await assertLineOpen(this.repo.manager, facture, 'la modification');
+    if (dto.fiscalMonth !== undefined && dto.fiscalMonth !== facture.fiscalMonth)
+      await assertMonthOpen(this.repo.manager, dto.fiscalMonth, 'd’y rattacher une ligne');
 
     if (dto.idPaie !== undefined && !idPaieEstValide(dto.idPaie)) {
       throw new BadRequestException(
@@ -339,6 +345,7 @@ export class FacturesService {
    */
   async confirmerSansFacture(id: number, auteur: AuteurAction): Promise<FactureEntity> {
     const facture = await this.trouver(id);
+    await assertLineOpen(this.repo.manager, facture, 'la confirmation');
 
     if (facture.statut !== StatutFacture.EN_ATTENTE_CONFIRMATION_PAIEMENT) {
       throw new BadRequestException(

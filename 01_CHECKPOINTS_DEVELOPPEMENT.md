@@ -23,7 +23,7 @@ Demande du 24/09/2026 : appliquer le plan directeur `00_PLAN_DIRECTEUR_WARAQA_IN
 | Checkpoint | Lot du plan | État | Preuve |
 |---|---|---|---|
 | CP01 — Baseline | L0 | Réalisé | `docs/checkpoints/CP01-*.log` : build OK, 121 unitaires, 100 e2e |
-| CP02 — Verrou de clôture commun | L1.4 | À faire | Reproduire puis fermer tous les chemins de mutation d'une période clôturée |
+| CP02 — Verrou de clôture commun | L1.4 | Réalisé | `backend/src/common/period-lock.ts` appliqué à PUT/PATCH /factures, création déclarée, archivage, liaison de pièce, affectation, annulation, rattachement, détachement, agent ; `backend/test/closed-period.e2e-spec.ts` (6 tests) ; `docs/checkpoints/CP02-tests.log` : 106 e2e verts |
 | CP03 — Sauvegarde complète | L1.5 | À faire | Livrables et boîte d'envoi Drive dans la sauvegarde ; restauration vérifiée |
 | CP04 — Rôles documentaires, contrat Drive, catalogue | L1.2, L1.3, L2.1 | À faire | Un modèle/historique/référentiel ne crée aucune ligne ; catalogue réel des capacités |
 | CP05 — Lecture des gros classeurs | L3.1 | À faire | Index + lecture par plages avec couverture ; plus de refus à 50 000 caractères |
@@ -37,4 +37,4 @@ Demande du 24/09/2026 : appliquer le plan directeur `00_PLAN_DIRECTEUR_WARAQA_IN
 
 ## Prochaine action exacte
 
-CP02 : créer `backend/src/common/period-lock.ts`, l'appliquer dans `FacturesService` (modifier, validerLigne, confirmerSansFacture) et `UnifiedService` (archive, restore, reconcile, cancelAllocation, releveAttach, releveDetach, linkDocument), écrire `backend/test/closed-period.e2e-spec.ts`.
+CP03 : étendre `backend/src/unified/backup.ts` aux dossiers `livrables/` et `drive-outbox/`, adapter `scripts/restore.cjs` (chemins autorisés, contrôle des livrables référencés), test dans `integrity.e2e-spec.ts`.
