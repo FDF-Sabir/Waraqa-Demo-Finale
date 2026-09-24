@@ -3,6 +3,11 @@ import { api, download, money, token, type RecordItem } from "./api";
 import { Icon } from "./Icons";
 import { InvoiceTable, Modal, type Page, type Run } from "./App";
 import Markdown from "./Markdown";
+import { Capabilities, Missions, ROLE_SHORT } from "./Cockpit";
+
+type Attached = { file: File; role: string };
+const ATTACH_ROLES = ["", "piece_comptable", "modele", "historique", "referentiel"];
+const attachLabel = (r: string) => (r ? ROLE_SHORT[r] : "rôle détecté");
 
 const usd = (n: number) =>
   n < 0.01 && n > 0 ? "< 0,01 $" : n.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " $";
@@ -75,7 +80,8 @@ export default function Chat({
   const [conversations, setConversations] = useState<RecordItem[]>([]),
     [activeId, setActiveId] = useState(""),
     [text, setText] = useState(() => sessionStorage.getItem(draftKey) || ""),
-    [files, setFiles] = useState<File[]>([]),
+    [files, setFiles] = useState<Attached[]>([]),
+    [showCap, setShowCap] = useState(false),
     [busy, setBusy] = useState(false),
     [rename, setRename] = useState(false),
     [remove, setRemove] = useState(false),
@@ -160,7 +166,7 @@ export default function Chat({
   async function send(retryText?: string, retryIds: string[] = [], noCache = false) {
     const question =
       (retryText || text).trim() ||
-      (files.length ? "Analyse les pièces jointes." : "");
+      (files.length ? (files.every((f) => f.role && f.role !== "piece_comptable") ? "Analyse ces documents de référence (aucune ligne à créer)." : "Analyse les pièces jointes.") : "");
     if (!question || busy) return;
     setBusy(true);
     const pendingFiles = [...files];
@@ -172,18 +178,20 @@ export default function Chat({
       const documentIds: string[] = [...retryIds];
       const lotIds: string[] = [];
       let note = "";
-      for (const file of pendingFiles) {
+      for (const { file, role } of pendingFiles) {
         const data = new FormData();
         data.append("file", file);
+        const roleQuery = role ? `&role=${role}` : "";
         if (/\.zip$/i.test(file.name)) {
           // Dossier compressé : import en lot en arrière-plan (suivi dans Importer et via l’assistant).
-          const lot = await api("/workspace/imports/zip", "POST", data);
+          const lot = await api("/workspace/imports/zip?x=1" + roleQuery, "POST", data);
           lotIds.push(lot.id);
-          note += `\n\n[Dossier « ${file.name} » : ${lot.data.total} pièce(s) à importer.]`;
+          note += `\n\n[Dossier « ${file.name} » : ${lot.data.total} fichier(s) à traiter${role ? ", rôle imposé : " + ROLE_SHORT[role] : ", rôles détectés automatiquement"}.]`;
           continue;
         }
-        const d = await api("/workspace/documents?reuse=true", "POST", data);
+        const d = await api("/workspace/documents?reuse=true" + roleQuery, "POST", data);
         documentIds.push(d.id);
+        if (d.data?.status === "reference") note += `\n\n[« ${file.name} » conservé comme ${ROLE_SHORT[d.data.role] || d.data.role} : aucune ligne créée.]`;
       }
       editDraft("");
       setFiles([]);
@@ -329,6 +337,9 @@ export default function Chat({
             </span>
             {sameMonth && (
               <div className="u-actions">
+                <button className="secondary small" onClick={() => setShowCap(true)} title="Catalogue réel des capacités de l’application et de l’assistant">
+                  Que sait faire Waraqa ?
+                </button>
                 <button
                   className="secondary small"
                   disabled={busy}
@@ -347,6 +358,7 @@ export default function Chat({
             )}
           </div>
           <div className="u-chat-scroll" ref={scroll}>
+            {sameMonth && <Missions conversationId={activeId} refreshKey={messages.length + ":" + busy} />}
             {!messages.length && (
               <div className="u-chat-welcome">
                 <div className="u-spark">✳</div>
@@ -443,6 +455,12 @@ export default function Chat({
                       <summary>Fait par l’agent ({m.result.executees.length}) — tracé au journal</summary>
                       <ul>{m.result.executees.map((e: any, i: number) => <li key={i}>{e.resume}</li>)}</ul>
                     </details>
+                  )}
+                  {m.result?.bilan && (
+                    <small className="u-usage">
+                      Bilan : {m.result.bilan.etapes} étape(s) · {m.result.bilan.outils.length} outil(s) · {m.result.bilan.actions} action(s) · {m.result.bilan.fichiers} fichier(s) · {m.result.bilan.propositions} proposition(s)
+                      {m.result.bilan.tronques?.length ? ` · résultats tronqués (lecture partielle) : ${m.result.bilan.tronques.join(", ")}` : ""}{m.result.bilan.erreurs ? ` · ${m.result.bilan.erreurs} refus d’outil` : ""}
+                    </small>
                   )}
                   {m.result?.sources?.length > 0 && (
                     <details className="u-sources">
@@ -569,9 +587,17 @@ export default function Chat({
               <div className="u-file-chips">
                 {files.map((f, i) => (
                   <span key={i}>
-                    {f.name}
+                    {f.file.name}
                     <button
-                      aria-label={"Retirer " + f.name}
+                      className="u-text-button"
+                      title="Rôle du document : détecté automatiquement, pièce à comptabiliser, ou modèle / historique / référentiel consulté sans créer de ligne"
+                      disabled={busy}
+                      onClick={() => setFiles((p) => p.map((x, j) => j === i ? { ...x, role: ATTACH_ROLES[(ATTACH_ROLES.indexOf(x.role) + 1) % ATTACH_ROLES.length] } : x))}
+                    >
+                      · {attachLabel(f.role)}
+                    </button>
+                    <button
+                      aria-label={"Retirer " + f.file.name}
                       disabled={busy}
                       onClick={() =>
                         setFiles((p) => p.filter((_, j) => i !== j))
@@ -626,7 +652,7 @@ export default function Chat({
                     disabled={busy}
                     onChange={(e) => {
                       // Liste lue avant la remise à zéro du champ : la mise à jour d'état peut être différée.
-                      const picked = Array.from(e.target.files || []);
+                      const picked = Array.from(e.target.files || []).map((file) => ({ file, role: "" }));
                       setFiles((p) => [...p, ...picked]);
                       e.target.value = "";
                     }}
@@ -668,6 +694,7 @@ export default function Chat({
           </div>
         </section>
       </div>
+      {showCap && <Capabilities close={() => setShowCap(false)} />}
       {confirm && MODIFYING.includes(confirm.type) && (
         <Modal title="Confirmer l’action proposée ?" close={() => setConfirm(null)}>
           <p>{describeAction(confirm)}</p>
