@@ -1,0 +1,14 @@
+
+> waraqa-unified-backend@4.6.0 test:e2e
+> jest --config ./test/jest-e2e.json --runInBand --testPathPattern=staging-consignes
+
+PASS test/staging-consignes.e2e-spec.ts (5.317 s)
+  Pièces en attente, corrections en masse, consignes, calcul, classeur
+    ✓ une pièce jointe au chat reste en attente, puis est comptabilisée sur demande ; consigne, calcul, classeur et rapport HTML livrés (312 ms)
+    ✓ un import Drive refusé pour autorisation débouche sur une proposition d’autorisation, pas sur un refus de format (65 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       2 passed, 2 total
+Snapshots:   0 total
+Time:        5.592 s, estimated 6 s
+Ran all test suites matching /staging-consignes/i.

@@ -123,9 +123,13 @@ export class UnifiedController {
   @UseInterceptors(
     FileInterceptor("file", { limits: { fileSize: 20 * 1024 * 1024 } }),
   )
-  upload(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any, @Query("preview") preview?: string, @Query("reuse") reuse?: string, @Query("role") role?: string) {
-    return this.service.upload(f, u, preview === "true", reuse === "true", role);
+  upload(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any, @Query("preview") preview?: string, @Query("reuse") reuse?: string, @Query("role") role?: string, @Query("staging") staging?: string) {
+    return this.service.upload(f, u, preview === "true", reuse === "true", role, staging === "true");
   }
+  @UseGuards(JwtAuthGuard) @Post("documents/:id/comptabiliser") comptabiliser(@Param('id') id: string, @UtilisateurCourant() u: any) { return this.service.comptabiliserPiece(id, u); }
+  @UseGuards(JwtAuthGuard) @Get("consignes") consignes() { return this.service.consignes(); }
+  @UseGuards(JwtAuthGuard) @Post("consignes") memoriser(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.memoriserConsigne(b || {}, u); }
+  @UseGuards(JwtAuthGuard) @Delete("consignes/:id") oublier(@Param('id') id: string, @UtilisateurCourant() u: any) { return this.service.oublierConsigne(id, u); }
   @UseGuards(JwtAuthGuard) @Get("documents/roles") documentRoles() { return this.service.documentRoles(); }
   @UseGuards(JwtAuthGuard) @Post("documents/:id/role") setRole(@Param('id') id: string, @Body() b: any, @UtilisateurCourant() u: any) { return this.service.setDocumentRole(id, b?.role, u); }
   @UseGuards(JwtAuthGuard) @Get("capacites") capacites(@UtilisateurCourant() u: any) { return this.service.capabilities(u); }

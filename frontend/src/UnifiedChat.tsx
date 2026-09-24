@@ -30,11 +30,11 @@ const SOURCE_LABELS: Record<string, string> = {
   snapshots: "Snapshots", precontroler_releve: "Précontrôle", plan_de_travail: "Plan de travail", lire_piece: "Pièce", lire_classeur: "Classeur", lire_plage: "Plage du classeur", entreprise: "Entreprise",
   corriger_ligne: "Correction", rattacher_periode: "Rattachement", rapprocher: "Rapprochement", creer_snapshot: "Snapshot",
   relire_piece: "Relecture", confirmer_designation: "Désignation", traiter_notification: "Notification",
-  importer_dossier_drive: "Import Drive", importer_drive: "Import Drive", capacites: "Capacités", generer_fichier: "Fichier", generer_tableau: "Tableau", generer_rapport: "Rapport", comparer_doublons: "Doublons",
+  importer_dossier_drive: "Import Drive", importer_drive: "Import Drive", capacites: "Capacités", generer_fichier: "Fichier", generer_tableau: "Tableau", generer_rapport: "Rapport", comparer_doublons: "Doublons", comptabiliser_piece: "Comptabilisation", corriger_lignes: "Corrections en masse", calculer: "Calcul", consignes: "Consignes", memoriser_consigne: "Consigne", oublier_consigne: "Consigne", generer_classeur: "Classeur",
 };
 
 /** Actions proposées par l'assistant qui modifient les données : confirmation explicite avant exécution. */
-const MODIFYING = ["valider_ligne", "valider_lignes", "rattacher_periode", "cloturer_releve", "importer_drive", "creer_snapshot", "confirmer_designation", "traiter_notification", "archiver_ligne", "lever_doublon"];
+const MODIFYING = ["valider_ligne", "valider_lignes", "rattacher_periode", "cloturer_releve", "importer_drive", "creer_snapshot", "confirmer_designation", "traiter_notification", "archiver_ligne", "lever_doublon", "autoriser_drive"];
 function describeAction(a: any) {
   const list = (ids: number[]) => ids.slice(0, 12).map((id) => "#" + id).join(", ") + (ids.length > 12 ? ` … (${ids.length} au total)` : "");
   switch (a.type) {
@@ -47,6 +47,7 @@ function describeAction(a: any) {
     case "confirmer_designation": return `Confirmer la désignation en attente #${a.designationId}.`;
     case "traiter_notification": return `Marquer la notification #${a.notificationId} comme traitée.`;
     case "archiver_ligne": return `Archiver la ligne #${a.factureId} (restaurable depuis Exports & snapshots).`;
+    case "autoriser_drive": return "Ouvrir l’autorisation Google (lecture seule des dossiers que vous indiquez) : vous serez redirigé vers Google puis ramené dans Waraqa.";
     case "lever_doublon": return `Confirmer que la ligne #${a.factureId} est une opération distincte : le marquage « doublon » est levé, votre motif est tracé et la ligne repasse à revoir.`;
     default: return a.libelle;
   }
@@ -189,9 +190,11 @@ export default function Chat({
           note += `\n\n[Dossier « ${file.name} » : ${lot.data.total} fichier(s) à traiter${role ? ", rôle imposé : " + ROLE_SHORT[role] : ", rôles détectés automatiquement"}.]`;
           continue;
         }
-        const d = await api("/workspace/documents?reuse=true" + roleQuery, "POST", data);
+        // Pièce jointe : conservée en attente ; l'agent la comptabilise seulement si vous le demandez.
+        const d = await api("/workspace/documents?reuse=true&staging=true" + roleQuery, "POST", data);
         documentIds.push(d.id);
         if (d.data?.status === "reference") note += `\n\n[« ${file.name} » conservé comme ${ROLE_SHORT[d.data.role] || d.data.role} : aucune ligne créée.]`;
+        else if (d.data?.status === "a_comptabiliser") note += `\n\n[« ${file.name} » conservé en attente : dites « comptabilise-la » pour créer les lignes.]`;
       }
       editDraft("");
       setFiles([]);
@@ -250,6 +253,7 @@ export default function Chat({
       case "traiter_notification": await api(`/notifications/${a.notificationId}/marquer-traitee`, "POST"); break;
       case "archiver_ligne": await api(`/workspace/invoices/${a.factureId}/archive`, "POST"); break;
       case "lever_doublon": await api(`/workspace/invoices/${a.factureId}/doublon/lever`, "POST", { motif: a.justification || "Ligne distincte confirmée par le comptable" }); break;
+      case "autoriser_drive": { const r = await api("/workspace/drive/start", "POST", { readonly: true }); location.href = r.url; return; }
     }
     await refresh();
     window.dispatchEvent(new Event("workspace-changed"));

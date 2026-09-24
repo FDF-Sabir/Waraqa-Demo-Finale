@@ -17,6 +17,7 @@ import { classifyDocument, createsLines, DocumentRole, parseRole, ROLE_LABELS } 
 import { describeIndex, readRange, workbookIndex } from "./workbook-reader";
 import { buildPlan, buildPrecontrole } from "./cockpit";
 import { markdownPdf } from "./report-pdf";
+import { calculer, classeurLibre, markdownHtml } from "./agent-extras";
 import {
   BadRequestException,
   ConflictException,
@@ -619,7 +620,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     await this.records.delete(id);
     return { ok: true };
   }
-  async upload(file: Express.Multer.File, user: any, preview = false, reuse = false, role?: unknown) {
+  async upload(file: Express.Multer.File, user: any, preview = false, reuse = false, role?: unknown, staging = false) {
     if (!file) throw new BadRequestException("Fichier requis.");
     const wanted = this.role(role);
     if (this.importing)
@@ -628,7 +629,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       );
     this.importing = true;
     try {
-      return await this.uploadInternal(file, user, preview, { reuse, role: wanted });
+      return await this.uploadInternal(file, user, preview, { reuse, role: wanted, staging });
     } finally {
       this.importing = false;
     }
@@ -724,7 +725,40 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
   async lots() {
     return (await this.list("import_lot")).sort((a, b) => b.data.createdAt.localeCompare(a.data.createdAt)).slice(0, 30);
   }
-  private async uploadInternal(file: Express.Multer.File, user: any, preview = false, opts: { reuse?: boolean; skipDrive?: boolean; lot?: string; role?: DocumentRole } = {}) {
+  /** Pièce en attente de décision (jointe au chat) : conservée, lisible par l'assistant, comptabilisée seulement sur demande. */
+  async comptabiliserPiece(id: string, user: any) {
+    const d = await this.get(id, "document");
+    if (d.data.role && !createsLines(d.data.role)) throw new ConflictException(`Document de référence (${ROLE_LABELS[d.data.role as DocumentRole]}) : reclassez-le en pièce comptable pour l’importer.`);
+    if (["en_cours", "en_attente"].includes(d.data.status)) throw new ConflictException("Lecture déjà en cours.");
+    if (["a_verifier", "partiel"].includes(d.data.status) && d.data.invoiceIds?.length) throw new ConflictException(`« ${d.data.name} » est déjà comptabilisée (${d.data.invoiceIds.length} ligne(s)).`);
+    return this.withImportLock(() => this.processDocument(id, user));
+  }
+  // ─── Consignes mémorisées (plan L7.1) : mémoire sourcée, révocable, jamais implicite ───
+  async consignes() {
+    return (await this.list("consigne")).filter((c) => c.data.actif !== false).sort((a, b) => String(a.data.createdAt).localeCompare(String(b.data.createdAt)))
+      .map((c) => ({ id: c.id, texte: c.data.texte, portee: c.data.portee, fournisseur: c.data.fournisseur || null, par: c.data.par, le: c.data.createdAt, demande: c.data.demande || null }));
+  }
+  async memoriserConsigne(body: { texte: unknown; portee?: unknown; fournisseur?: unknown; demande?: unknown }, user: any) {
+    const texte = String(body.texte || "").trim();
+    if (texte.length < 5 || texte.length > 600) throw new BadRequestException("Consigne de 5 à 600 caractères.");
+    const portee = body.portee === "fournisseur" ? "fournisseur" : "globale";
+    const fournisseur = portee === "fournisseur" ? String(body.fournisseur || "").trim().slice(0, 150) : "";
+    if (portee === "fournisseur" && !fournisseur) throw new BadRequestException("Fournisseur requis pour une consigne à portée fournisseur.");
+    if ((await this.consignes()).length >= 100) throw new BadRequestException("100 consignes maximum : révoquez-en d’abord.");
+    if (/mot de passe|cl[ée] api|sk-ant-|secret|token/i.test(texte)) throw new BadRequestException("Une consigne ne peut pas contenir de secret.");
+    const id = "consigne-" + randomUUID();
+    await this.save(id, "consigne", { texte, portee, fournisseur, actif: true, createdAt: now(), par: user.nom, parId: user.sub, source: "utilisateur", demande: String(body.demande || "").slice(0, 300) });
+    await this.journal.ecrire({ action: "consigne_memorisee", ...this.actor(user), details: { id, texte, portee, fournisseur } });
+    return { id, texte, portee, fournisseur: fournisseur || null };
+  }
+  async oublierConsigne(id: string, user: any) {
+    const c = await this.get(id, "consigne");
+    c.data.actif = false; c.data.revoquee = { le: now(), par: user.nom };
+    await this.save(id, "consigne", c.data);
+    await this.journal.ecrire({ action: "consigne_revoquee", ...this.actor(user), details: { id, texte: c.data.texte } });
+    return { ok: true };
+  }
+  private async uploadInternal(file: Express.Multer.File, user: any, preview = false, opts: { reuse?: boolean; skipDrive?: boolean; lot?: string; role?: DocumentRole; staging?: boolean } = {}) {
     const ext = extname(file.originalname).toLowerCase();
     if (!ACCEPTED.includes(ext))
       throw new BadRequestException(
@@ -779,6 +813,13 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     };
     await this.save(id, "document", document);
     if (!opts.skipDrive) await this.drive.enqueueSafe("document", id, file.originalname, document.createdAt.slice(0, 7));
+    if (opts.staging && createsLines(role)) {
+      // Pièce jointe au chat : en attente de décision (analyse possible, aucune ligne tant que l'utilisateur ne demande pas la comptabilisation).
+      document.status = "a_comptabiliser";
+      await this.save(id, "document", document);
+      await this.journal.ecrire({ action: "document_en_attente", ...this.actor(user), lotId: id, details: { role, nom: document.name } });
+      return this.get(id, "document");
+    }
     if (!createsLines(role)) {
       // Document de référence : original conservé, consultable par l'assistant, AUCUNE ligne créée.
       await this.journal.ecrire({ action: "document_reference", ...this.actor(user), lotId: id, details: { role, source: document.roleSource, indices: suggestion.indices.slice(0, 5), identiteContradictoire: Boolean(suggestion.identiteContradictoire) }, notifiable: Boolean(suggestion.identiteContradictoire) });
@@ -1311,12 +1352,29 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
         const pied = `\n\n---\n_Waraqa — ${statut === "final" ? "version finale" : "brouillon de travail"} · ${settings.company.name || "société"}${spec.mois ? " · période " + spec.mois : ""} · par ${owner.nom} (agent IA) · ${createdAt.slice(0, 16).replace("T", " ")}${spec.sources?.length ? "\nDonnées consultées : " + spec.sources.join(" ; ") : ""}_\n`;
         const out: Livrable[] = [];
         const formats: string[] = Array.isArray(spec.formats) && spec.formats.length ? spec.formats : ["md", "pdf"];
+        if (formats.some((f) => !["md", "pdf", "html"].includes(f))) throw new BadRequestException("Formats de rapport : md, pdf, html.");
         if (formats.includes("md")) out.push(await this.saveLivrable({ buffer: Buffer.from(`# ${titre}\n\n${contenu}${pied}`, "utf8"), mime: "text/markdown; charset=utf-8", name: `Waraqa-rapport-${slug}${spec.mois ? "-" + spec.mois : ""}.md` }, owner.id, conversationId));
         if (formats.includes("pdf")) out.push(await this.saveLivrable({ buffer: await markdownPdf({ title: titre, markdown: contenu, createdAt, author: owner.nom + " (agent IA)", month: spec.mois, company: settings.company, statut, sources: spec.sources }), mime: "application/pdf", name: `Waraqa-rapport-${slug}${spec.mois ? "-" + spec.mois : ""}.pdf` }, owner.id, conversationId));
+        if (formats.includes("html")) out.push(await this.saveLivrable({ buffer: Buffer.from(markdownHtml({ title: titre, markdown: contenu, meta: `${settings.company.name || ""}${spec.mois ? " · période " + spec.mois : ""} · ${statut === "final" ? "version finale" : "brouillon de travail"} · par ${owner.nom} (agent IA) · ${createdAt.slice(0, 16).replace("T", " ")}`, sources: spec.sources }), "utf8"), mime: "text/html; charset=utf-8", name: `Waraqa-rapport-${slug}${spec.mois ? "-" + spec.mois : ""}.html` }, owner.id, conversationId));
         await this.journal.ecrire({ action: "rapport_genere", utilisateurId: owner.id, saisiPar: agent.nom, details: { titre, statut, formats, caracteres: contenu.length, fichiers: out.map((l) => l.nom) } });
         return out;
       },
       leverDoublon: async (factureId, motif) => { const f = await this.leverDoublon(factureId, motif, agent); return `Doublon levé sur #${factureId} (ligne distincte confirmée) — statut ${f.statut}, à revoir`; },
+      comptabiliser: async (documentId) => {
+        const d = await this.comptabiliserPiece(documentId, agent);
+        return `Pièce « ${d.data.name} » comptabilisée : ${d.data.status}, ${d.data.invoiceIds.length} ligne(s)${d.data.errors?.length ? ", " + d.data.errors.length + " rejet(s) : " + d.data.errors.slice(0, 3).join(" ; ") : ""}`;
+      },
+      classeur: async (spec) => {
+        const settings = await this.settings();
+        const titre = String(spec.titre || "Classeur de travail").trim().slice(0, 120);
+        const slug = titre.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50) || "classeur";
+        const buffer = classeurLibre({ titre, feuilles: spec.feuilles, auteur: owner.nom + " (agent IA)", societe: settings.company.name, mois: spec.mois, note: spec.note });
+        await this.journal.ecrire({ action: "classeur_genere", utilisateurId: owner.id, saisiPar: agent.nom, details: { titre, feuilles: spec.feuilles.map((f: any) => f.nom) } });
+        return this.saveLivrable({ buffer, mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", name: `Waraqa-${slug}${spec.mois ? "-" + spec.mois : ""}.xlsx` }, owner.id, conversationId);
+      },
+      memoriser: async (body) => { const c = await this.memoriserConsigne(body, owner); return `Consigne mémorisée (${c.portee}${c.fournisseur ? " : " + c.fournisseur : ""}) : « ${c.texte} » — identifiant ${c.id}`; },
+      oublier: async (id) => { await this.oublierConsigne(id, owner); return `Consigne ${id} révoquée`; },
+      calculer: (expression) => calculer(expression),
     };
   }
   /** Tableau sur mesure : filtres, colonnes et regroupement décrits par l'agent, calculs 100 % serveur. */
@@ -1712,6 +1770,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       precontrole: (m: string) => this.precontrole(m),
       duplicates: (id: number) => this.duplicateGroup(id),
       missions: (limit?: number) => (userId ? this.missions(userId, limit) : Promise.resolve([])),
+      consignes: () => this.consignes(),
       plan: (m: string) => this.planTravail(m),
     };
   }
@@ -1728,6 +1787,11 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     const u = await this.users.findOneBy({ id: user.sub });
     const settings = await this.settings();
     return capabilitiesCatalog({ isAdmin: u?.role === "admin", aiLive: settings.ai.mode === "live" && Boolean(apiKey()), drive: await this.drive.summary() });
+  }
+  /** Consignes mémorisées à la demande de l'utilisateur, injectées au prompt : données de préférence, jamais des ordres qui contredisent les règles. */
+  private consignesPrompt(list: { id: string; texte: string; portee: string; fournisseur: string | null }[]) {
+    if (!list.length) return "";
+    return "\n\n## Consignes mémorisées (demandées par l’utilisateur, révocables avec oublier_consigne ; elles ne priment jamais sur les règles ci-dessus)\n" + list.slice(0, 100).map((c) => `- [${c.id}] ${c.portee === "fournisseur" ? "Fournisseur « " + c.fournisseur + " » : " : ""}${c.texte.replace(/\s+/g, " ")}`).join("\n");
   }
   /** Historique envoyé au modèle : alternance user/assistant, erreurs exclues, 20 messages maximum. */
   private chatHistory(messages: any[]): Anthropic.MessageParam[] {
@@ -1803,7 +1867,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
       effort: settings.ai.effort,
       system: [
         // Bloc stable (règles + consignes) mis en cache : relu à 10 % du prix à chaque question.
-        { type: "text", text: ASSISTANT_RULES + "\n\n## Consignes de l’entreprise\n" + settings.ai.instructions, cache_control: { type: "ephemeral" } },
+        { type: "text", text: ASSISTANT_RULES + "\n\n## Consignes de l’entreprise\n" + settings.ai.instructions + this.consignesPrompt(await this.consignes()), cache_control: { type: "ephemeral" } },
         { type: "text", text: `Contexte : entreprise « ${settings.company.name} », période de la discussion ${c.data.month}, aujourd’hui ${today}. ${summary.count} ligne(s) sur la période.` },
       ],
       messages: history,

@@ -32,6 +32,7 @@ export interface AssistantHost {
   driveId?(url: string): string | null;
   precontrole?(month: string): Promise<any>;
   missions?(limit?: number): Promise<any[]>;
+  consignes?(): Promise<{ id: string; texte: string; portee: string; fournisseur: string | null; par: string; le: string }[]>;
   duplicates?(id: number): Promise<any>;
   plan?(month: string): Promise<any>;
   driveSummary?(): Promise<{ configured: boolean; authorized: boolean; needsReauth: boolean; canRead: boolean; email: string | null }>;
@@ -55,6 +56,11 @@ export interface AgentActions {
   rapport(spec: { titre: string; contenu: string; formats?: string[]; mois?: string; statut?: string; sources?: string[] }): Promise<Livrable[]>;
   /** Réservé à l'humain (jamais appelé directement par l'agent) : exposé pour les tests d'équivalence des chemins. */
   leverDoublon?(factureId: number, motif: string): Promise<string>;
+  comptabiliser(documentId: string): Promise<string>;
+  classeur(spec: { titre?: string; feuilles: { nom: string; lignes: unknown[][] }[]; mois?: string; note?: string }): Promise<Livrable>;
+  memoriser(body: { texte: string; portee?: string; fournisseur?: string; demande?: string }): Promise<string>;
+  oublier(id: string): Promise<string>;
+  calculer(expression: string): { expression: string; resultat: number; arrondi2: number };
 }
 export interface ActionExecutee { outil: string; resume: string }
 
@@ -66,7 +72,7 @@ const REGROUPEMENTS = ['fournisseur', 'taux', 'designation', 'mois', 'sousType',
 export const ACTION_TYPES = [
   'ouvrir_page', 'ouvrir_ligne', 'rapprocher', 'exporter', 'telecharger_piece',
   'valider_ligne', 'valider_lignes', 'rattacher_periode', 'cloturer_releve', 'importer_drive',
-  'creer_snapshot', 'confirmer_designation', 'traiter_notification', 'archiver_ligne', 'lever_doublon',
+  'creer_snapshot', 'confirmer_designation', 'traiter_notification', 'archiver_ligne', 'lever_doublon', 'autoriser_drive',
 ] as const;
 export interface ProposedAction {
   type: (typeof ACTION_TYPES)[number];
@@ -168,7 +174,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
   {
     name: 'generer_rapport',
     description: 'AGIT : produit un RAPPORT RÉDACTIONNEL libre (analyse, synthèse d’avancement, recommandations, décisions attendues) à partir des résultats d’outils déjà obtenus, livré en Markdown et/ou PDF téléchargeables. Le contenu est du Markdown (titres ##, listes, tableaux) ; il ne contient que des chiffres issus des outils et cite ses sources dans une section « Sources ». Pas pour les relevés ou tableaux de lignes (utiliser generer_fichier / generer_tableau).',
-    input_schema: { type: 'object', properties: { titre: { type: 'string' }, contenu: { type: 'string', description: 'Markdown complet du rapport (60 000 caractères max).' }, formats: { type: 'array', items: { type: 'string', enum: ['md', 'pdf'] }, description: 'Par défaut : md et pdf.' }, mois: MONTH, statut: { type: 'string', enum: ['brouillon', 'final'] }, sources: { type: 'array', items: { type: 'string' }, description: 'Outils et périmètres consultés.' } }, required: ['titre', 'contenu'], additionalProperties: false },
+    input_schema: { type: 'object', properties: { titre: { type: 'string' }, contenu: { type: 'string', description: 'Markdown complet du rapport (60 000 caractères max).' }, formats: { type: 'array', items: { type: 'string', enum: ['md', 'pdf', 'html'] }, description: 'Par défaut : md et pdf. html = page lisible dans un navigateur ou copiable dans un traitement de texte (pas de format Word natif).' }, mois: MONTH, statut: { type: 'string', enum: ['brouillon', 'final'] }, sources: { type: 'array', items: { type: 'string' }, description: 'Outils et périmètres consultés.' } }, required: ['titre', 'contenu'], additionalProperties: false },
   },
   {
     name: 'capacites',
@@ -234,6 +240,41 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
       source: { type: 'object', properties: { type: { type: 'string', enum: ['piece', 'utilisateur', 'classeur', 'autre_ligne'] }, documentId: { type: 'string', description: 'Identifiant de la pièce ou du classeur lu.' }, reference: { type: 'string', description: 'Localisation : page, cellule (EDI!I12), ligne #id, ou citation courte.' } }, required: ['type'], additionalProperties: false },
       expectedVersion: { type: 'integer', description: 'Version de la ligne telle que lue.' },
     }, required: ['factureId', 'champs', 'justification', 'source'], additionalProperties: false },
+  },
+  {
+    name: 'comptabiliser_piece',
+    description: 'AGIT : comptabilise une pièce conservée en attente (statut a_comptabiliser : jointe au chat sans demande d’import) ou restée à saisir / en erreur / interrompue : lecture (IA ou fichier structuré) et création des lignes du relevé. À appeler quand l’utilisateur demande d’importer, traiter ou comptabiliser la pièce ; pas pour une simple analyse. Un document de référence (modèle, historique…) est refusé.',
+    input_schema: { type: 'object', properties: { documentId: { type: 'string' } }, required: ['documentId'], additionalProperties: false },
+  },
+  {
+    name: 'corriger_lignes',
+    description: 'AGIT : corrections EN MASSE (100 maximum par appel), chacune avec ses champs, sa justification, sa provenance et sa version lue, comme corriger_ligne. Résultat ligne par ligne (corrigée / refusée avec la cause) ; une ligne refusée n’empêche pas les autres. Utiliser pour un même défaut répété (ex. ICE d’un fournisseur, mode de paiement d’un relevé).',
+    input_schema: { type: 'object', properties: { corrections: { type: 'array', maxItems: 100, items: { type: 'object', properties: { factureId: { type: 'integer' }, champs: { type: 'object' }, justification: { type: 'string' }, source: { type: 'object', properties: { type: { type: 'string', enum: ['piece', 'utilisateur', 'classeur', 'autre_ligne'] }, documentId: { type: 'string' }, reference: { type: 'string' } }, required: ['type'], additionalProperties: false }, expectedVersion: { type: 'integer' } }, required: ['factureId', 'champs', 'justification', 'source'], additionalProperties: false } } }, required: ['corrections'], additionalProperties: false },
+  },
+  {
+    name: 'calculer',
+    description: 'Calcul EXACT d’une expression arithmétique par le serveur (+ - * / %, parenthèses, round(x, n), abs, min, max, sum). À utiliser pour tout calcul que les autres outils ne renvoient pas déjà (écart, prorata, pourcentage, cumul) : ne jamais calculer de tête.',
+    input_schema: { type: 'object', properties: { expression: { type: 'string', description: 'Ex. round(1200/1.2, 2) ou (4500+320)*0.2' } }, required: ['expression'], additionalProperties: false },
+  },
+  {
+    name: 'consignes',
+    description: 'Consignes mémorisées à la demande de l’utilisateur (préférences de livrables, conventions d’affectation d’un fournisseur, rappels), avec identifiant, portée et auteur. Elles sont aussi rappelées dans tes instructions ; utiliser pour les citer ou en révoquer une.',
+    input_schema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'memoriser_consigne',
+    description: 'AGIT : mémorise une consigne durable UNIQUEMENT quand l’utilisateur le demande explicitement (« retiens que… », « désormais… »). Portée globale ou fournisseur (avec son nom). Jamais de secret, jamais une règle fiscale inventée : une consigne est une préférence de travail, révocable avec oublier_consigne.',
+    input_schema: { type: 'object', properties: { texte: { type: 'string' }, portee: { type: 'string', enum: ['globale', 'fournisseur'] }, fournisseur: { type: 'string' }, demande: { type: 'string', description: 'Extrait de la demande de l’utilisateur.' } }, required: ['texte'], additionalProperties: false },
+  },
+  {
+    name: 'oublier_consigne',
+    description: 'AGIT : révoque une consigne mémorisée (identifiant issu de consignes), à la demande de l’utilisateur.',
+    input_schema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: false },
+  },
+  {
+    name: 'generer_classeur',
+    description: 'AGIT : classeur Excel LIBRE (jusqu’à 20 feuilles) à partir de tableaux que tu rédiges (plan de travail, échéancier, comparaison, modèle à remplir), livré en téléchargement. Une feuille « À propos » précise que le contenu est rédigé par l’agent. Pour les lignes comptables réelles, utiliser generer_tableau (calcul serveur).',
+    input_schema: { type: 'object', properties: { titre: { type: 'string' }, feuilles: { type: 'array', maxItems: 20, items: { type: 'object', properties: { nom: { type: 'string' }, lignes: { type: 'array', items: { type: 'array' }, description: 'Première ligne = en-têtes.' } }, required: ['nom', 'lignes'], additionalProperties: false } }, mois: MONTH, note: { type: 'string' } }, required: ['feuilles'], additionalProperties: false },
   },
   {
     name: 'etat_mission',
@@ -303,6 +344,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
       'Propose à l’utilisateur un bouton d’action qu’IL confirmera : rien n’est exécuté par cet outil, les contrôles du serveur s’appliquent au clic. 10 propositions maximum par réponse.',
       'Navigation : ouvrir_page (page), ouvrir_ligne (factureId).',
       'Téléchargements : exporter (format ; mois et scope optionnels : reviewed = lignes revues, all = brouillon). Formats : xlsx, pdf, csv, sage, json = relevé de travail ; releve-xml = fichier EDI SIMPL ; releve-xlsx = relevé au modèle Excel DGI ; releve-pdf ; snapshot-pdf = dernier snapshot du mois ; archives-pdf = lignes archivées ; sauvegarde = sauvegarde complète (administrateur). telecharger_piece (documentId) = fichier original d’une pièce.',
+      'Accès : autoriser_drive (administrateur) = ouvrir l’autorisation Google Drive en lecture quand un import Drive est refusé pour autorisation manquante.',
       'Actions sur les données : valider_ligne (factureId) ou valider_lignes (factureIds, 200 max) = marquer revues des lignes complètes, non doublons ; rattacher_periode (factureIds, mois) = déclarer des paiements antérieurs sur le relevé du mois ; cloturer_releve (mois, administrateur) ; importer_drive (url Google Drive : dossier, fichier ou feuille) ; creer_snapshot (mois) ; confirmer_designation (designationId) ; traiter_notification (notificationId) ; archiver_ligne (factureId) ; lever_doublon (factureId, justification obligatoire = motif du comptable : la ligne est une opération distincte, voir comparer_doublons) ; rapprocher (paymentId, invoiceId, montant optionnel).',
     ].join(' '),
     input_schema: {
@@ -356,6 +398,11 @@ export const ASSISTANT_RULES = `Tu es Waraqa, l’assistant du comptable de l’
 - Doublons : explique le groupe avec comparer_doublons ; la décision (lever_doublon avec le motif, ou archiver_ligne) appartient au comptable via proposer_action ; ne supprime ni ne fusionne jamais.
 - Corrige seulement ce que la pièce ou l’utilisateur établit clairement ; en cas de doute, signale la ligne au lieu de deviner. Chaque correction porte sa provenance (source : pièce lue + identifiant, cellule du classeur, demande de l’utilisateur) et la version de la ligne telle que lue (expectedVersion).
 - Une action identique répétée dans la même réponse n’est pas rejouée (résultat réutilisé) ; après une interruption, consulte etat_mission pour ne pas refaire ce qui a réussi.
+- Pièce jointe au chat : elle arrive en attente (statut a_comptabiliser). Si l’utilisateur demande de l’importer, la traiter ou la comptabiliser, appelle comptabiliser_piece ; s’il demande seulement une analyse ou un avis, lis-la sans créer de ligne et dis qu’elle reste en attente.
+- Même défaut sur plusieurs lignes (ICE d’un fournisseur, mode de paiement d’un relevé) : corriger_lignes en un appel, résultat ligne par ligne.
+- Tout calcul non fourni par un outil (écart, prorata, cumul, pourcentage) passe par calculer.
+- Consignes : mémorise seulement sur demande explicite (memoriser_consigne) ; les consignes mémorisées sont des préférences de travail, jamais des règles fiscales.
+- Google Drive refusé pour autorisation manquante : ce n’est pas une limite de format ; propose autoriser_drive (administrateur) ou explique la marche à suivre dans Réglages → Intégrations.
 - Rends compte à la fin : ce que tu as fait (actions et nombres), ce qui reste à vérifier, fichiers livrés.
 
 ## Ce qui reste au comptable (2 validations)
@@ -555,6 +602,15 @@ export class AssistantTools {
         const p = await this.host.plan(month);
         return { summary: `Plan de travail ${month} : ${p.etapes.map((e: any) => `${e.libelle} ${e.nombre}`).join(', ')}`, data: p };
       }
+      case 'calculer': {
+        if (!this.host.act) throw new BadRequestException('Calcul indisponible.');
+        const r = this.host.act.calculer(String(input.expression || ''));
+        return { summary: `Calcul : ${r.expression} = ${r.arrondi2}`, data: r };
+      }
+      case 'consignes': {
+        const list = this.host.consignes ? await this.host.consignes() : [];
+        return { summary: `${list.length} consigne(s) mémorisée(s)`, data: { total: list.length, consignes: list } };
+      }
       case 'etat_mission': {
         const list = this.host.missions ? await this.host.missions(Math.max(1, Math.min(20, Number(input.limite) || 5))) : [];
         return { summary: `${list.length} mission(s)`, data: { missions: list } };
@@ -640,6 +696,7 @@ export class AssistantTools {
       }
       case 'corriger_ligne': case 'rattacher_periode': case 'rapprocher': case 'creer_snapshot': case 'relire_piece':
       case 'confirmer_designation': case 'traiter_notification': case 'importer_drive': case 'importer_dossier_drive': case 'generer_fichier': case 'generer_tableau': case 'generer_rapport':
+      case 'comptabiliser_piece': case 'corriger_lignes': case 'memoriser_consigne': case 'oublier_consigne': case 'generer_classeur':
         return this.act(name, input);
       case 'proposer_action':
         return this.propose(input);
@@ -708,8 +765,33 @@ export class AssistantTools {
         data = { livre: true, fichier: l.nom, taille: l.taille };
         break;
       }
+      case 'comptabiliser_piece': resume = await a.comptabiliser(String(input.documentId || '')); break;
+      case 'corriger_lignes': {
+        const list = Array.isArray(input.corrections) ? input.corrections : [];
+        if (!list.length || list.length > 100) throw new BadRequestException('1 à 100 corrections par appel.');
+        const resultats: { factureId: number; ok: boolean; resume: string }[] = [];
+        for (const c of list) {
+          try { const r = await this.act('corriger_ligne', c); resultats.push({ factureId: Number(c?.factureId), ok: true, resume: r.summary }); }
+          catch (e: any) { resultats.push({ factureId: Number(c?.factureId), ok: false, resume: e?.getStatus ? e.message : 'Correction impossible.' }); }
+        }
+        const ok = resultats.filter(r => r.ok).length;
+        resume = `Corrections en masse : ${ok}/${list.length} ligne(s) corrigée(s)`;
+        data = { corrigees: ok, refusees: list.length - ok, resultats };
+        // Les corrections individuelles sont déjà comptées dans executees ; le lot ne les recompte pas.
+        this.done.set(key, { summary: resume, data });
+        return { summary: resume, data };
+      }
+      case 'memoriser_consigne': resume = await a.memoriser({ texte: String(input.texte || ''), portee: input.portee, fournisseur: input.fournisseur, demande: input.demande }); break;
+      case 'oublier_consigne': resume = await a.oublier(String(input.id || '')); break;
+      case 'generer_classeur': {
+        const l = await a.classeur({ titre: input.titre, feuilles: input.feuilles, mois: input.mois ? this.month(input.mois) : undefined, note: input.note });
+        this.livrables.push(l);
+        resume = `Classeur produit : ${l.nom}`;
+        data = { livre: true, fichier: l.nom, taille: l.taille, note: 'Contenu rédigé par l’agent (feuille « À propos ») ; pas un calcul serveur.' };
+        break;
+      }
       case 'generer_rapport': {
-        if (input.formats !== undefined && (!Array.isArray(input.formats) || input.formats.some((f: any) => !['md', 'pdf'].includes(f)))) throw new BadRequestException('formats : md et/ou pdf.');
+        if (input.formats !== undefined && (!Array.isArray(input.formats) || input.formats.some((f: any) => !['md', 'pdf', 'html'].includes(f)))) throw new BadRequestException('formats : md, pdf et/ou html.');
         const files = await a.rapport({ titre: String(input.titre || ''), contenu: String(input.contenu || ''), formats: input.formats, mois: input.mois ? this.month(input.mois) : undefined, statut: input.statut, sources: Array.isArray(input.sources) ? input.sources.map(String).slice(0, 30) : this.traces.map(t => t.name).filter((n, i, arr) => arr.indexOf(n) === i) });
         this.livrables.push(...files);
         resume = `Rapport produit : ${files.map(f => f.nom).join(', ')}`;
@@ -817,6 +899,10 @@ export class AssistantTools {
       const f = await this.host.findInvoice(Number(input.factureId));
       if (!f || f.archivee) throw new BadRequestException('Ligne introuvable ou déjà archivée.');
       action.factureId = f.id;
+    } else if (input.type === 'autoriser_drive') {
+      if (!this.host.isAdmin) throw new BadRequestException('Autorisation Drive réservée à un administrateur : demandez-lui de connecter Google Drive (Réglages → Intégrations).');
+      const d = this.host.driveSummary ? await this.host.driveSummary() : null;
+      if (d && !d.configured) throw new BadRequestException('Identifiants Google absents : un administrateur doit d’abord enregistrer le client OAuth (Réglages → Intégrations).');
     } else if (input.type === 'lever_doublon') {
       const f = await this.host.findInvoice(Number(input.factureId));
       if (!f || f.archivee) throw new BadRequestException('Ligne introuvable ou archivée.');
@@ -849,7 +935,8 @@ const STEP_LABELS: Record<string, string> = {
   pieces: 'Lecture des pièces', journal: 'Lecture du journal', proposer_action: 'Préparation des actions',
   releve_deduction: 'Contrôle du relevé de déduction', imports: 'Suivi des imports',
   designations: 'Lecture des désignations', notifications: 'Lecture des notifications', snapshots: 'Lecture des snapshots',
-  corriger_ligne: 'Correction d’une ligne', etat_mission: 'Lecture des missions', rattacher_periode: 'Rattachement au relevé', rapprocher: 'Rapprochement d’un paiement',
+  corriger_ligne: 'Correction d’une ligne', corriger_lignes: 'Corrections en masse', etat_mission: 'Lecture des missions', comptabiliser_piece: 'Comptabilisation d’une pièce',
+  calculer: 'Calcul exact', consignes: 'Lecture des consignes', memoriser_consigne: 'Mémorisation d’une consigne', oublier_consigne: 'Révocation d’une consigne', generer_classeur: 'Production du classeur', rattacher_periode: 'Rattachement au relevé', rapprocher: 'Rapprochement d’un paiement',
   creer_snapshot: 'Création du snapshot', relire_piece: 'Relecture d’une pièce', confirmer_designation: 'Confirmation d’une désignation',
   traiter_notification: 'Traitement d’une notification', importer_drive: 'Import depuis Google Drive', importer_dossier_drive: 'Import depuis Google Drive', generer_fichier: 'Production du fichier',
   capacites: 'Consultation des capacités', precontroler_releve: 'Précontrôle de la période', plan_de_travail: 'Plan de travail',
@@ -904,7 +991,7 @@ export async function runAssistant(input: AssistantRunInput) {
   }
   let lastText = parts.filter((p, i) => i === parts.length - 1 || p.length >= 200).join('\n\n');
   // Filet de sécurité : ne jamais laisser croire à un bouton qui n'a pas été préparé.
-  if (lastText && !input.tools.actions.length && !input.tools.livrables.length && /\bboutons?\b|cliquez/i.test(lastText))
+  if (lastText && !input.tools.actions.length && !input.tools.livrables.length && /cliquez sur|boutons? ci-dessous|bouton (?:suivant|proposé|préparé)/i.test(lastText))
     lastText += '\n\n_Aucun bouton n’a été préparé pour cette réponse : redemandez l’action (par exemple « propose le bouton pour … »)._';
   if (!lastText) lastText = 'Je n’ai pas pu terminer l’analyse dans la limite d’étapes. Posez une question plus ciblée (un mois, un fournisseur, une ligne).';
   return { text: lastText, truncated };

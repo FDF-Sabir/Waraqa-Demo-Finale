@@ -46,6 +46,7 @@ export function buildPrecontrole(i: PrecontroleInput) {
   const sources = {
     documents: docs.length,
     aReprendre: { a_saisir: compte(d => d.status === 'a_saisir'), erreur: compte(d => d.status === 'erreur'), partiel: compte(d => d.status === 'partiel'), interrompu: compte(d => d.status === 'interrompu'), apercu: compte(d => d.status === 'apercu') },
+    aComptabiliser: compte(d => d.status === 'a_comptabiliser'),
     references: compte(d => d.status === 'reference'), aClassifier: compte(d => (d.role || 'piece_comptable') === 'a_classifier'), identitesContradictoires: compte(d => Boolean(d.identiteContradictoire)),
     importsEnCours: i.lots.filter(l => l.data.status === 'en_cours').length,
   };
@@ -55,6 +56,7 @@ export function buildPrecontrole(i: PrecontroleInput) {
   if (releve.cloture) blocages.push({ code: 'periode_cloturee', gravite: 'info', message: `Relevé ${i.month} clôturé le ${String(releve.cloture.createdAt).slice(0, 10)} par ${releve.cloture.author} : aucune modification sans réouverture (administrateur).`, action: { type: 'ouvrir_page', page: 'declaration', libelle: 'Voir le relevé clôturé' } });
   if (!societe.complete) blocages.push({ code: 'societe_incomplete', gravite: 'bloquant', message: `Fiche entreprise incomplète : ${manques.join(' et ')} à renseigner (Réglages → Entreprise, administrateur). Le brouillon reste possible ; le fichier définitif non.`, action: { type: 'ouvrir_page', page: 'reglages', libelle: 'Compléter la fiche entreprise' } });
   if (sources.importsEnCours) blocages.push({ code: 'import_en_cours', gravite: 'attention', message: `${sources.importsEnCours} import(s) en cours : les compteurs évolueront jusqu’à leur fin.`, action: { type: 'ouvrir_page', page: 'import', libelle: 'Suivre les imports' } });
+  if (sources.aComptabiliser) blocages.push({ code: 'pieces_en_attente', gravite: 'attention', message: `${sources.aComptabiliser} pièce(s) jointe(s) en attente de comptabilisation : analysées mais sans ligne tant que vous ne demandez pas leur import.`, action: { type: 'ouvrir_page', page: 'import', libelle: 'Comptabiliser les pièces en attente' } });
   if (sources.aClassifier) blocages.push({ code: 'documents_a_classifier', gravite: 'attention', message: `${sources.aClassifier} document(s) à classer : conservés sans ligne tant que leur rôle (pièce, modèle, historique…) n’est pas choisi.`, action: { type: 'ouvrir_page', page: 'import', libelle: 'Classer les documents' } });
   if (sources.identitesContradictoires) blocages.push({ code: 'identite_contradictoire', gravite: 'attention', message: `${sources.identitesContradictoires} document(s) portent une raison sociale différente de la société configurée : leur identité n’est jamais recopiée ; vérifier qu’ils appartiennent bien à ce dossier.`, action: { type: 'ouvrir_page', page: 'import', libelle: 'Vérifier les documents' } });
   const aReprendre = Object.values(sources.aReprendre).reduce((a, b) => a + b, 0);
@@ -92,7 +94,7 @@ export function buildPlan(i: PrecontroleInput) {
   const p = buildPrecontrole(i);
   const tax = i.rows.filter(f => !i.isBank(f));
   const docs = i.documents;
-  const aClasser = docs.filter(d => (d.data.role || 'piece_comptable') === 'a_classifier');
+  const aClasser = docs.filter(d => (d.data.role || 'piece_comptable') === 'a_classifier' || d.data.status === 'a_comptabiliser');
   const aReprendre = docs.filter(d => ['a_saisir', 'erreur', 'partiel', 'interrompu', 'apercu'].includes(d.data.status));
   const incompletes = tax.filter(f => f.statut !== StatutFacture.VALIDEE);
   const aControler = tax.filter(f => f.doublonDe || (f.vigilanceRenforcee && !f.revueHumaine));
@@ -100,7 +102,7 @@ export function buildPlan(i: PrecontroleInput) {
   const m = i.month;
   const etapes: EtapePlan[] = [
     { code: 'a_classer', libelle: 'À classer', nombre: aClasser.length, documentIds: aClasser.map(d => d.id).slice(0, 200), page: 'import', etat: aClasser.length ? 'attention' : 'fait',
-      invite: aClasser.length ? `Pour ${m} : liste les documents à classer (outil pieces, rôle a_classifier), lis leur index (lire_classeur) et propose pour chacun le rôle adapté avec ses indices ; ne crée aucune ligne sans ma décision.` : undefined },
+      invite: aClasser.length ? `Pour ${m} : liste les documents à classer ou en attente (outil pieces : rôle a_classifier, statut a_comptabiliser), lis-les (lire_piece / lire_classeur), propose pour chacun le rôle adapté avec ses indices et comptabilise (comptabiliser_piece) ceux qui sont clairement des pièces du mois ; ne crée aucune ligne sur un doute.` : undefined },
     { code: 'a_completer', libelle: 'À compléter', nombre: incompletes.length + aReprendre.length, ids: incompletes.map(f => f.id).slice(0, 200), documentIds: aReprendre.map(d => d.id).slice(0, 200), page: 'releve', etat: incompletes.length + aReprendre.length ? 'a_faire' : 'fait',
       invite: incompletes.length + aReprendre.length ? `Pour ${m} : complète les ${incompletes.length} ligne(s) incomplète(s) depuis leurs pièces (lire_piece) en ne corrigeant que ce que la pièce prouve, relis les ${aReprendre.length} pièce(s) à reprendre, puis rends compte ligne par ligne.` : undefined },
     { code: 'a_controler', libelle: 'À contrôler', nombre: aControler.length, ids: aControler.map(f => f.id).slice(0, 200), page: 'releve', etat: aControler.length ? 'attention' : 'fait',

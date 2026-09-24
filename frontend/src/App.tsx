@@ -1765,10 +1765,10 @@ function Imports({
                       {d.data.periodes?.length > 1 && <small className="u-muted">Périodes : {d.data.periodes.slice(0, 4).join(", ")}{d.data.periodes.length > 4 ? "…" : ""}</small>}
                     </td>
                     <td>
-                      <Status tone={d.data.status === "reference" ? "blue" : d.data.errors.length ? "amber" : "green"}>
-                        {d.data.status === "reference" ? "référence · aucune ligne" : d.data.status.replaceAll("_", " ")}
+                      <Status tone={d.data.status === "reference" ? "blue" : d.data.status === "a_comptabiliser" ? "amber" : d.data.errors.length ? "amber" : "green"}>
+                        {d.data.status === "reference" ? "référence · aucune ligne" : d.data.status === "a_comptabiliser" ? "en attente · à comptabiliser" : d.data.status.replaceAll("_", " ")}
                       </Status>
-                      <small>{d.data.status === "reference" ? "consultable par l’assistant" : d.data.mode}</small>
+                      <small>{d.data.status === "reference" ? "consultable par l’assistant" : d.data.status === "a_comptabiliser" ? "jointe au chat, aucune ligne" : d.data.mode}</small>
                     </td>
                     <td>{d.data.invoiceIds.length}</td>
                     <td>
@@ -1802,6 +1802,7 @@ function Imports({
                         {d.data.status === 'en_cours' && <button className="secondary small" onClick={() => run(() => api(`/workspace/documents/${d.id}/cancel`, 'POST'), 'Annulation demandée après la ligne en cours')}>Annuler</button>}
                         {d.data.status === 'apercu' && <button className="primary small" onClick={() => setDetails(d)}>Vérifier l’aperçu</button>}
                         {d.data.status === 'reference' && <button className="primary small" onClick={() => setRole(d, 'piece_comptable')}>Importer comme pièce</button>}
+                        {d.data.status === 'a_comptabiliser' && <button className="primary small" onClick={() => run(async () => { await api(`/workspace/documents/${d.id}/comptabiliser`, 'POST'); await refresh(); }, 'Pièce comptabilisée')}>Comptabiliser</button>}
                         {!d.data.invoiceIds.length && !['apercu', 'reference'].includes(d.data.status) && (
                           <button
                             className="secondary small"
