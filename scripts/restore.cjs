@@ -9,13 +9,13 @@ async function restore(archive, destination) {
   if (!['waraqa-backup-1', 'waraqa-backup-2'].includes(data.format) || !data.files?.['waraqa.sqlite']) throw Error('Format de sauvegarde invalide.');
   const entries = Object.entries(data.files);
   for (const [name, content] of entries) {
-    if (!/^(waraqa\.sqlite|files\/[a-f0-9-]+\.[a-z0-9]+|livrables\/livrable-[a-f0-9-]+|drive-outbox\/[a-f0-9]+\.bin)$/i.test(name)) throw Error('Chemin de sauvegarde invalide.');
+    if (!/^(waraqa\.sqlite|files\/[a-f0-9-]+\.[a-z0-9]+|livrables\/livrable-[a-f0-9-]+|drive-outbox\/[a-f0-9]+\.bin|lots\/lot-[a-f0-9-]+\.zip)$/i.test(name)) throw Error('Chemin de sauvegarde invalide.');
     if (createHash('sha256').update(Buffer.from(content, 'base64')).digest('hex') !== data.hashes[name]) throw Error('Empreinte invalide : ' + name);
   }
   // mkdir without recursive deliberately rejects existing destinations.
   await fs.mkdir(destination, { mode: 0o700 });
   try {
-    for (const sub of ['files', 'livrables', 'drive-outbox']) await fs.mkdir(path.join(destination, sub));
+    for (const sub of ['files', 'livrables', 'drive-outbox', 'lots']) await fs.mkdir(path.join(destination, sub));
     for (const [name, content] of entries) await fs.writeFile(path.join(destination, name), Buffer.from(content, 'base64'), { mode: 0o600, flag: 'wx' });
     const db = new sqlite.Database(path.join(destination, 'waraqa.sqlite'));
     const query = sql => new Promise((resolve, reject) => db.all(sql, (e, rows) => e ? reject(e) : resolve(rows)));

@@ -1710,11 +1710,14 @@ function Imports({
                   {l.data.status === "en_cours" ? "en cours" : l.data.status === "interrompu" ? "interrompu" : "terminé"}
                 </span>
                 <progress max={l.data.total || 1} value={l.data.processed} />
+                {l.data.status === "interrompu" && <button className="secondary small" onClick={(e) => { e.preventDefault(); run(async () => { await api(`/workspace/imports/${l.id}/reprendre`, "POST"); setLots(await api("/workspace/imports")); }, "Reprise du lot lancée"); }}>Reprendre le lot</button>}
+                {l.data.reprises > 0 && <small className="u-muted">repris {l.data.reprises} fois après interruption</small>}
               </summary>
               {l.data.items.map((x: any, i: number) => (
                 <div className="u-task" key={i}>
                   <span>{x.name}{x.error && <small className="u-warn">{x.error}</small>}</span>
                   {x.role && x.role !== "piece_comptable" && <RoleBadge role={x.role} />}
+                  {!x.role && x.rolePrevu && x.rolePrevu !== "piece_comptable" && <small className="u-muted">prévu : {ROLE_SHORT[x.rolePrevu]}</small>}
                   <Status tone={["a_verifier", "deja_importe"].includes(x.state) ? "green" : ["en_attente", "en_cours"].includes(x.state) ? "blue" : x.state === "reference" ? "blue" : "amber"}>
                     {x.state === "reference" ? "référence · aucune ligne" : String(x.state).replace(/_/g, " ")}{x.lines ? ` · ${x.lines}` : ""}
                   </Status>

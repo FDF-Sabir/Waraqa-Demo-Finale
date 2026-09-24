@@ -12,7 +12,7 @@ const RETRY_MS = 100, MAX_ATTEMPTS = 600; // jusqu'à 60 s d'attente
 export const BACKUP_FORMAT = 'waraqa-backup-2';
 /** Dossiers dérivés, frères du stockage des originaux (même convention que les services). */
 export function derivedDirs(storage: string) {
-  return { livrables: resolve(storage, '..', 'livrables'), outbox: resolve(storage, '..', 'drive-outbox') };
+  return { livrables: resolve(storage, '..', 'livrables'), outbox: resolve(storage, '..', 'drive-outbox'), lots: resolve(storage, '..', 'lots') };
 }
 async function collect(files: Record<string, string>, dir: string, prefix: string, accept: RegExp) {
   let names: string[] = [];
@@ -39,6 +39,7 @@ export async function backupData(source: DataSource, storage: string, dirs = der
     await collect(files, storage, 'files/', /^[a-f0-9-]+\.[a-z0-9]+$/i);
     await collect(files, dirs.livrables, 'livrables/', /^livrable-[a-f0-9-]+$/i);
     await collect(files, dirs.outbox, 'drive-outbox/', /^[a-f0-9]+\.bin$/i);
+    await collect(files, dirs.lots, 'lots/', /^lot-[a-f0-9-]+\.zip$/i);
     const hashes = Object.fromEntries(Object.entries(files).map(([name, content]) => [name, createHash('sha256').update(Buffer.from(content, 'base64')).digest('hex')]));
     return gzipSync(JSON.stringify({ format: BACKUP_FORMAT, createdAt: new Date().toISOString(), hashes, files }));
   } finally { await rm(dir, { recursive: true, force: true }); }

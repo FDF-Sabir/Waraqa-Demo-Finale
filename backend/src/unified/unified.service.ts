@@ -5,7 +5,7 @@ import { apiKey, cost, KEY_PATTERN, maskedKey, MODEL_PRESETS, workspaceId, write
 import { ASSISTANT_RULES, AssistantTools, capabilitiesCatalog, runAssistant } from "../ia/assistant";
 import { onlineProfile, profile } from "../common/profile";
 import { assertLineOpen, assertMonthOpen, closureId } from "../common/period-lock";
-import { driveIdFromLink, IntegrationsService } from "./integrations.service";
+import { driveIdFromLink, DriveInputFile, IntegrationsService } from "./integrations.service";
 import { NotificationsService } from "../notifications/notifications.service";
 import { DesignationsService } from "../designations/designations.service";
 import { ModifierFactureDto } from "../factures/dto/modifier-facture.dto";
@@ -182,9 +182,10 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
   ) {}
   async onModuleInit() {
     await mkdir(this.storage, { recursive: true });
-    // Lots interrompus par un arrêt du serveur : signalés, les pièces déjà traitées restent acquises.
-    for (const lot of await this.records.findBy({ kind: "import_lot" }))
-      if (lot.data.status === "en_cours") { lot.data.status = "interrompu"; await this.records.save(lot); }
+    await mkdir(this.lotsDir, { recursive: true });
+    // Lots interrompus par un arrêt du serveur : repris depuis leur dernière entrée si leur origine est
+    // conservée (archive stockée, fichiers Drive) ; sinon signalés, les pièces déjà traitées restent acquises.
+    await this.recoverLots();
     if (!(await this.records.findOneBy({ id: "settings" })))
       await this.save("settings", "settings", defaults);
     for (let i = 0; i < builtinTemplates.length; i++)
@@ -663,8 +664,20 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     this.importing = true;
     try { return await fn(); } finally { this.importing = false; }
   }
-  // ─── Import en lot : dossier ZIP ou dossier Google Drive ─────────────────────
+  // ─── Import en lot : dossier ZIP ou dossier Google Drive (file durable, plan L2.5) ────
   private lotQueue: Promise<unknown> = Promise.resolve();
+  private readonly lotsDir = resolve(process.env.WARAQA_FILES_PATH || "data/files", "..", "lots");
+  /** Manifeste d'un ZIP avant tout traitement : entrées, rôle prévu (chemin), exclusions ; rien n'est stocké. */
+  manifestZip(file: Express.Multer.File) {
+    if (!file) throw new BadRequestException("Fichier requis.");
+    if (extname(file.originalname).toLowerCase() !== ".zip") throw new BadRequestException("Dossier compressé .zip attendu.");
+    let archive;
+    try { archive = extractZip(file.buffer); } catch (e: any) { throw new BadRequestException(e.message); }
+    const entries = archive.entries.map((e) => { const s = classifyDocument(e.name, extname(e.name).toLowerCase()); return { name: e.name, taille: e.buffer.length, rolePrevu: s.role, indice: s.indices[0] }; });
+    const parRole: Record<string, number> = {};
+    for (const e of entries) parRole[e.rolePrevu] = (parRole[e.rolePrevu] || 0) + 1;
+    return { nom: file.originalname, total: entries.length, parRole, candidatsPieces: entries.filter((e) => createsLines(e.rolePrevu)).length, references: entries.filter((e) => !createsLines(e.rolePrevu)).length, entries, skipped: archive.skipped, note: "Rôle prévu d’après le chemin ; la structure du fichier peut le préciser à l’import. Aucun fichier n’a été stocké." };
+  }
   async importZip(file: Express.Multer.File, user: any, role?: unknown) {
     if (!file) throw new BadRequestException("Fichier requis.");
     const wanted = this.role(role);
@@ -672,7 +685,50 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     let archive;
     try { archive = extractZip(file.buffer); } catch (e: any) { throw new BadRequestException(e.message); }
     if (!archive.entries.length) throw new BadRequestException("Aucune pièce exploitable dans l’archive (PDF, images, Excel, CSV, JSON).");
-    return this.startLot("zip", file.originalname, archive.entries.map((e) => ({ name: e.name, load: async () => e.buffer })), archive.skipped, user, { role: wanted });
+    // L'archive est conservée : un lot interrompu (arrêt du serveur) reprend depuis sa dernière entrée.
+    const id = "lot-" + randomUUID();
+    await mkdir(this.lotsDir, { recursive: true });
+    await writeFile(resolve(this.lotsDir, id + ".zip"), file.buffer, { mode: 0o600 });
+    return this.startLot("zip", file.originalname, archive.entries.map((e) => ({ name: e.name, load: async () => e.buffer })), archive.skipped, user, { role: wanted, id, origin: { type: "zip", file: id + ".zip" } });
+  }
+  /** Reconstruit les chargeurs d'un lot depuis son origine conservée (archive ZIP stockée ou fichiers Drive). */
+  private async lotLoaders(lot: any): Promise<{ name: string; load: () => Promise<Buffer> }[] | null> {
+    const origin = lot.origin;
+    if (!origin) return null;
+    if (origin.type === "zip") {
+      let buffer: Buffer;
+      try { buffer = await readFile(resolve(this.lotsDir, origin.file)); } catch { return null; }
+      const archive = extractZip(buffer);
+      const byName = new Map(archive.entries.map((e) => [e.name, e.buffer]));
+      return lot.items.map((i: any) => ({ name: i.name, load: async () => { const b = byName.get(i.name); if (!b) throw new BadRequestException("Entrée absente de l’archive conservée."); return b; } }));
+    }
+    if (origin.type === "drive") return lot.items.map((i: any, n: number) => ({ name: i.name, load: () => this.drive.download(origin.files[n] as DriveInputFile) }));
+    return null;
+  }
+  /** Reprise des lots `en_cours` au démarrage (ou `interrompu` sur demande) : les entrées déjà traitées ne sont pas rejouées. */
+  async recoverLots(onlyId?: string) {
+    const lots = (await this.records.findBy({ kind: "import_lot" })).filter((l) => (onlyId ? l.id === onlyId : l.data.status === "en_cours"));
+    const resumed: string[] = [];
+    for (const lot of lots) {
+      const loaders = await this.lotLoaders(lot.data);
+      if (!loaders) { if (lot.data.status === "en_cours") { lot.data.status = "interrompu"; await this.records.save(lot); } continue; }
+      lot.data.status = "en_cours"; lot.data.reprises = (lot.data.reprises || 0) + 1; lot.data.derniereReprise = now();
+      for (const item of lot.data.items) if (item.state === "en_cours") item.state = "en_attente";
+      await this.records.save(lot);
+      const user = { sub: lot.data.authorId, nom: lot.data.author };
+      this.lotQueue = this.lotQueue.then(() => this.runLot(lot.id, loaders, user, { skipDrive: lot.data.source === "drive", role: lot.data.role || undefined })).catch(() => undefined);
+      resumed.push(lot.id);
+    }
+    return resumed;
+  }
+  async resumeLot(id: string, user: any) {
+    const lot = await this.get(id, "import_lot");
+    if (lot.data.status === "en_cours") throw new ConflictException("Lot déjà en cours.");
+    if (lot.data.status === "termine") throw new ConflictException("Lot déjà terminé.");
+    const resumed = await this.recoverLots(id);
+    if (!resumed.length) throw new BadRequestException("Origine du lot non conservée (import antérieur) : relancez l’import du dossier.");
+    await this.journal.ecrire({ action: "lot_repris", ...this.actor(user), details: { lot: id } });
+    return this.get(id, "import_lot");
   }
   /** Import depuis Google Drive : dossier (récursif), fichier unique ou feuille Google Sheets (convertie en Excel). */
   async importDriveFolder(link: unknown, user: any, role?: unknown) {
@@ -680,14 +736,15 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     const wanted = this.role(role);
     const folder = await this.drive.readFolder(link);
     if (!folder.files.length) throw new BadRequestException(`Aucune pièce exploitable dans « ${folder.name} » (PDF, images, Excel, CSV, JSON, Google Sheets).`);
-    return this.startLot("drive", folder.name, folder.files.map((f) => ({ name: f.path, load: () => this.drive.download(f) })), folder.skipped, user, { skipDrive: true, role: wanted });
+    return this.startLot("drive", folder.name, folder.files.map((f) => ({ name: f.path, load: () => this.drive.download(f) })), folder.skipped, user, { skipDrive: true, role: wanted, origin: { type: "drive", files: folder.files } });
   }
-  private async startLot(source: "zip" | "drive", label: string, items: { name: string; load: () => Promise<Buffer> }[], skipped: { name: string; reason: string }[], user: any, opts: { skipDrive?: boolean; role?: DocumentRole } = {}) {
-    const id = "lot-" + randomUUID();
+  private async startLot(source: "zip" | "drive", label: string, items: { name: string; load: () => Promise<Buffer> }[], skipped: { name: string; reason: string }[], user: any, opts: { skipDrive?: boolean; role?: DocumentRole; id?: string; origin?: any } = {}) {
+    const id = opts.id || "lot-" + randomUUID();
     const lot = {
       source, label, createdAt: now(), author: user.nom, authorId: user.sub, status: "en_cours", total: items.length, processed: 0,
-      items: items.map((i) => ({ name: i.name, state: "en_attente" as string, documentId: null as string | null, lines: 0, error: null as string | null, role: null as string | null })),
-      skipped, ...(opts.role ? { role: opts.role } : {}),
+      // Rôle prévu d'après le chemin (manifeste avant traitement) ; le rôle définitif est fixé à la lecture du fichier.
+      items: items.map((i) => ({ name: i.name, state: "en_attente" as string, documentId: null as string | null, lines: 0, error: null as string | null, role: null as string | null, rolePrevu: opts.role || classifyDocument(i.name, extname(i.name).toLowerCase()).role })),
+      skipped, ...(opts.role ? { role: opts.role } : {}), ...(opts.origin ? { origin: opts.origin } : {}),
     };
     await this.save(id, "import_lot", lot);
     await this.journal.ecrire({ action: "lot_import_lance", ...this.actor(user), details: { lot: id, source, label, pieces: items.length, ignores: skipped.length } });
@@ -699,6 +756,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
     const lot = rec.data;
     for (let i = 0; i < items.length; i++) {
       const item = lot.items[i];
+      if (!["en_attente", "en_cours"].includes(item.state)) continue; // reprise : entrée déjà traitée, jamais rejouée
       item.state = "en_cours";
       await this.save(id, "import_lot", lot);
       try {
@@ -710,7 +768,7 @@ export class UnifiedService implements OnModuleInit, OnModuleDestroy {
         item.state = e instanceof ConflictException ? "deja_importe" : "erreur";
         item.error = e?.getStatus || e instanceof Error ? String(e.message).slice(0, 300) : "Import impossible.";
       }
-      lot.processed = i + 1;
+      lot.processed = lot.items.filter((x: any) => !["en_attente", "en_cours"].includes(x.state)).length;
       await this.save(id, "import_lot", lot);
     }
     lot.status = "termine";

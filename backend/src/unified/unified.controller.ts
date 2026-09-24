@@ -227,11 +227,12 @@ export class UnifiedController {
   }
   @UseGuards(JwtAuthGuard) @Get("imports") lots() { return this.service.lots(); }
   @UseGuards(JwtAuthGuard) @Get("imports/:id") lot(@Param("id") id: string) { return this.service.get(id, "import_lot"); }
+  @UseGuards(JwtAuthGuard) @Post("imports/:id/reprendre") resumeLot(@Param("id") id: string, @UtilisateurCourant() u: any) { return this.service.resumeLot(id, u); }
   @UseGuards(JwtAuthGuard) @Post("imports/drive") importDrive(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.importDriveFolder(b?.url, u, b?.role); }
   @UseGuards(JwtAuthGuard)
   @Post("imports/zip")
   @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 300 * 1024 * 1024 } }))
-  importZip(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any, @Query("role") role?: string) { return this.service.importZip(f, u, role); }
+  importZip(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any, @Query("role") role?: string, @Query("dryRun") dryRun?: string) { return dryRun === "true" ? this.service.manifestZip(f) : this.service.importZip(f, u, role); }
   @UseGuards(JwtAuthGuard) @Get("livrables/:id") async livrable(@Param("id") id: string, @UtilisateurCourant() u: any, @Res() res: Response) {
     const f = await this.service.livrable(id, u);
     res.setHeader("Content-Type", f.mime);
