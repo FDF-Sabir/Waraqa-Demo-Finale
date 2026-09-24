@@ -1,4 +1,12 @@
-# Waraqa 4.5 — application locale, fonctionnement en ligne
+# Waraqa 4.6 — application locale, fonctionnement en ligne
+
+> **Nouveau en 4.6 — l’intelligence comptable pilote le dossier** (plan directeur `00_PLAN_DIRECTEUR_WARAQA_INTELLIGENCE_COMPTABLE.md`, suivi dans `01_CHECKPOINTS_DEVELOPPEMENT.md`) :
+> - **Comprendre avant de comptabiliser** : chaque document reçoit un rôle (pièce comptable, paiement, modèle, historique, référentiel, justificatif annexe, vérité terrain, à classer). Un modèle du comptable, un classeur historique ou un fichier de vérité terrain est conservé et consultable **sans créer aucune ligne** ; une raison sociale différente de la société est signalée et jamais recopiée. Rôle imposable au dépôt, reclassement tracé.
+> - **Plan de travail et précontrôle** partagés par l’interface et l’assistant : À classer → À compléter → À contrôler → Prêt pour revue → Relevé → Clôture, blocages codés avec l’action qui les lève et « Confier à l’IA » avec la demande déjà rédigée.
+> - **Gros classeurs lus par index et par plages** (feuilles, en-têtes, formules, identité, périodes ; couverture total/couvert/reste) : plus de refus « scindez votre fichier ».
+> - **Clôture versionnée** : version figée complète (lignes, contrôles, totaux, règles, empreintes XML/XLSX), fichiers définitifs produits depuis la version, réouverture motivée conservant l’historique ; **verrou de période sur tous les chemins** (routes, atelier, agent).
+> - **Doublons explicables** (critères communs / différences, pièces) et décision humaine tracée ; **rapports rédactionnels** Markdown/PDF livrés par l’agent ; **missions persistées** (reprise sans double effet), provenance et version obligatoires pour toute correction, budget réservé avant chaque appel, catalogue réel des capacités (« Que sait faire Waraqa ? »).
+> - **Sauvegarde complète** (originaux, fichiers livrés, boîte d’envoi Drive) et restauration contrôlée ; Google Drive : dossier, fichier unique ou feuille Google Sheets.
 
 Waraqa s’installe et se lance **sur votre poste**, mais dès son démarrage il travaille comme une version hébergée (**profil en ligne**, par défaut) :
 

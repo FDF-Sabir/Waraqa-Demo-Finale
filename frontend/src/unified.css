@@ -1433,3 +1433,9 @@ pre {
 .u-capacites li { margin: 4px 0; font-size: 13px; }
 .u-missions li small { display: block; color: #67786f; }
 .u-versions td small { display: block; color: #67786f; }
+.u-role-chip select { max-width: 100%; }
+@media (max-width: 640px) {
+  .u-task:has(.u-role-chip), .u-blocage { flex-wrap: wrap; }
+  .u-role-chip, .u-role-chip select { width: 100%; }
+  .u-blocage button { width: 100%; }
+}

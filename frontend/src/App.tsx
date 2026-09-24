@@ -923,7 +923,7 @@ export default function App() {
             />
           )}
           <footer>
-            Waraqa 4.5 · {settings?.ai.profile === "online" ? "Profil en ligne" : "Profil local"} ·{" "}
+            Waraqa 4.6 · {settings?.ai.profile === "online" ? "Profil en ligne" : "Profil local"} ·{" "}
             {settings?.ai.mode === "live"
               ? "IA connectée"
               : settings?.ai.profile === "online"

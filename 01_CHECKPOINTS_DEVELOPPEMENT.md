@@ -33,8 +33,18 @@ Demande du 24/09/2026 : appliquer le plan directeur `00_PLAN_DIRECTEUR_WARAQA_IN
 | CP09 — Rapports rédactionnels | L3.4 | Réalisé | `report-pdf.ts` (Markdown → PDF paginé, métadonnées, sources et limites), outil `generer_rapport` (md + pdf livrés, tracés) ; `report-pdf.spec.ts`, `assistant.spec.ts`, `doublons-rapport.e2e-spec.ts` ; `docs/checkpoints/CP08-tests.log` |
 | CP10 — Orchestrateur fiable | L4.2–L4.5 | Réalisé | Provenance obligatoire + `expectedVersion` sur `corriger_ligne` (journal avant/après/source/version), idempotence des actions répétées, missions persistées (`mission-*`, checkpoints à chaque appel, statuts terminee/interrompue/echouee, outil `etat_mission`, route `GET /workspace/missions`), bilan structuré, réservation de budget libérée en toute issue ; `missions.e2e-spec.ts` (3) ; `docs/checkpoints/CP10-tests.log` |
 | CP11 — Interface pilotée | L8 | Réalisé | `frontend/src/Cockpit.tsx` (plan de travail, blocages avec actions, rôles, capacités, missions) intégré au tableau de bord, à l'import, au relevé (versions, réouverture motivée) et au chat (rôle des pièces jointes, bilan) ; parcours navigateur `scripts/ui-test-cockpit.mjs` (8 étapes, 0 erreur console, connexion admin@gmail.com) → `docs/tests-interface-cockpit.json`, captures `docs/apercu-plan-de-travail.png`, `apercu-capacites.png`, `apercu-import-roles.png`, `apercu-precontrole.png` ; `npm run test:smoke` vert (`docs/checkpoints/CP11-smoke.log`) |
-| CP12 — Documentation et recette | L10 | À faire | Suite complète verte, version, manifeste |
+| CP12 — Documentation et recette | L10 | Réalisé | Version 4.6.0 (paquets, statut, pied de page, lanceur), `LISEZ-MOI.md`, `docs/IA-ASSISTANT.md`, `docs/ETAT-REPRISE.md`, manifeste SHA-256 régénéré ; recette complète : 136 unitaires, 123 e2e, smoke (17 parcours), navigateur historique (13 groupes, 14 viewports) et cockpit (8 étapes), 0 erreur console — `docs/checkpoints/CP12-*.log` |
 
-## Prochaine action exacte
+## Rapport final de cette itération (24/09/2026)
 
-CP12 : documentation (`docs/IA-ASSISTANT.md`, `LISEZ-MOI.md`, `docs/ETAT-REPRISE.md`), version 4.6.0, manifeste d'intégrité, recette complète (unitaires, e2e, smoke, navigateur) et rapport final dans ce fichier.
+**Livré et démontré** (tests datés du commit qui les contient) : lots L0, L1 (complet), L2.1 / L2.4, L3.1 / L3.4, L4.2–L4.5 (fondations), L5.3, L8.1 / L8.5, ainsi que le catalogue des capacités et le contrat Drive. Chaque point est vérifié par un test automatisé ou un parcours navigateur listé dans le tableau ci-dessus.
+
+**Ce qui n'a pas été fait dans cette itération et reste au plan** (ne pas le déclarer réalisé) :
+
+- L2.2 / L2.3 / L2.5 : prévisualisation d'un lot hétérogène avant engagement, mapping versionné par source, file d'import durable avec reprise complète après redémarrage (les lots interrompus restent signalés, les pièces déjà traitées acquises).
+- L3.2 / L3.3 / L3.5 : adaptation versionnée du modèle du comptable, feuilles de synthèse/contrôles/sources dans l'Excel de travail, vérification visuelle sous Excel/LibreOffice.
+- L5.1 / L5.2 / L5.4 / L5.5 : registre de règles fiscales validées par un comptable référent (les règles actuelles sont archivées avec chaque version mais restent un comportement logiciel), paiements partiels / avoirs / prorata, essai contrôlé de dépôt SIMPL.
+- L6 (banque, référentiel fournisseurs, avoirs assistés), L7 (mémoire métier, veille), L8.2–L8.4 (vues multi-mois, brouillons durables, accessibilité approfondie), L9 (multi-sociétés), L10.1–L10.3 (CI, recette sécurité/charge, installation reproductible).
+- Recette avec la clé Anthropic réelle (`npm run test:ia`) : non exécutée ici (aucune clé dans cet environnement) ; tous les parcours IA de cette itération utilisent le client simulé. À lancer sur le poste du comptable avec le plafond `WARAQA_TEST_BUDGET_USD`.
+
+**Prochaine action exacte** : L2.5 (file d'import durable : persister `load` par entrée — hash + chemin — et reprendre un lot `interrompu` depuis son dernier item au redémarrage), puis L2.2 (aperçu du lot par rôle/période avant engagement des extractions payantes), puis L5.1 avec le comptable référent.

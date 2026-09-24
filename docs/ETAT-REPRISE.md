@@ -1,6 +1,23 @@
-# État de reprise — 24 septembre 2026 · version 4.5.0 (l’agent fait le travail)
+# État de reprise — 24 septembre 2026 · version 4.6.0 (intelligence comptable pilotée)
 
-## Ajouté en 4.5.0
+## Ajouté en 4.6.0 (branche `claude/charming-knuth-gum8u3`, checkpoints CP01–CP12)
+
+Suivi détaillé, preuves et prochaine action : `01_CHECKPOINTS_DEVELOPPEMENT.md` ; diagnostic et backlog : `00_PLAN_DIRECTEUR_WARAQA_INTELLIGENCE_COMPTABLE.md`.
+
+- **Verrou de période commun** (`backend/src/common/period-lock.ts`) appliqué à toutes les mutations d’une ligne déclarée dans un relevé clôturé (routes `/factures`, atelier, agent) — `closed-period.e2e-spec.ts`.
+- **Sauvegarde format 2** (`backup.ts`, `scripts/restore.cjs`) : originaux + fichiers livrés + boîte d’envoi Drive, livrable référencé absent refusé à la restauration.
+- **Rôles documentaires** (`unified/document-role.ts`) : classification déterministe (chemin, structure Tableau5, périodes, identité), statut `reference` sans ligne, contradiction de société signalée, reclassement `POST /api/workspace/documents/:id/role` — `document-roles.e2e-spec.ts`.
+- **Lecteur de classeurs** (`unified/workbook-reader.ts`) : index et plages ; chat sans refus à 50 000 caractères — `workbook-chat.e2e-spec.ts`.
+- **Cockpit** (`unified/cockpit.ts`, `frontend/src/Cockpit.tsx`) : précontrôle et plan de travail, routes `precontrole` / `plan-travail`, outils `precontroler_releve` / `plan_de_travail` — `cockpit.e2e-spec.ts`, parcours `scripts/ui-test-cockpit.mjs`.
+- **Clôture versionnée** (`releve_version`, `GET /api/workspace/releve/versions`, réouverture motivée) — `releve-version.e2e-spec.ts`.
+- **Doublons explicables** (`GET /api/workspace/invoices/:id/doublon`, `POST …/doublon/lever`, outil `comparer_doublons`, proposition `lever_doublon`) et **rapports** (`unified/report-pdf.ts`, outil `generer_rapport`) — `doublons-rapport.e2e-spec.ts`.
+- **Orchestrateur** : provenance + `expectedVersion`, idempotence, missions (`mission-*`, `GET /api/workspace/missions`, outil `etat_mission`), bilan, réservation de budget — `missions.e2e-spec.ts`.
+- Catalogue des capacités (`GET /api/workspace/capacites`, outil `capacites`), outil `importer_drive` (dossier, fichier, Sheets, rôle).
+- Résultats : voir `01_CHECKPOINTS_DEVELOPPEMENT.md` (suite unitaire, e2e, smoke, navigateur).
+
+## Historique — version 4.5.0 (l’agent fait le travail)
+
+### Ajouté en 4.5.0
 
 - Choix de l’utilisateur : **agent + 2 validations**. L’agent exécute lui-même les traitements réversibles (`AgentActions` dans `backend/src/ia/assistant.ts`, implémentées par `UnifiedService.agentActions`) ; seuls « lignes revues », clôture et archivage passent par un bouton confirmé.
 - Fichiers livrés (`livrable`, stockés dans `data/livrables/`, route `GET /api/workspace/livrables/:id`, propriétaire ou administrateur) ; tableau sur mesure `UnifiedService.customTable` (route `POST /api/workspace/tableau`).
