@@ -22,7 +22,7 @@ const SOURCE_LABELS: Record<string, string> = {
   synthese_mois: "Synthèse", rechercher_lignes: "Lignes", detail_ligne: "Détail", anomalies: "Anomalies",
   top_fournisseurs: "Fournisseurs", rapprochement: "Rapprochement", pieces: "Pièces", journal: "Journal", proposer_action: "Action",
   releve_deduction: "Relevé de déduction", imports: "Imports", designations: "Désignations", notifications: "Notifications",
-  snapshots: "Snapshots", lire_piece: "Pièce", entreprise: "Entreprise",
+  snapshots: "Snapshots", lire_piece: "Pièce", lire_classeur: "Classeur", lire_plage: "Plage du classeur", entreprise: "Entreprise",
   corriger_ligne: "Correction", rattacher_periode: "Rattachement", rapprocher: "Rapprochement", creer_snapshot: "Snapshot",
   relire_piece: "Relecture", confirmer_designation: "Désignation", traiter_notification: "Notification",
   importer_dossier_drive: "Import Drive", importer_drive: "Import Drive", capacites: "Capacités", generer_fichier: "Fichier", generer_tableau: "Tableau",
