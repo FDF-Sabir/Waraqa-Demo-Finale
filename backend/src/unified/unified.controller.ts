@@ -55,6 +55,7 @@ export class UnifiedController {
   @UseGuards(JwtAuthGuard) @Post('ai/test') aiTest(@UtilisateurCourant() u:any) {return this.service.testAi(u);}
   @UseGuards(JwtAuthGuard) @Get('conversations/:id/progress') chatProgress(@Param('id') id:string,@UtilisateurCourant() u:any) {return this.service.chatProgressFor(id,u);}
   @UseGuards(JwtAuthGuard) @Get('readiness') readiness() {return this.service.readiness();}
+  @UseGuards(JwtAuthGuard) @Get('missions') missions(@UtilisateurCourant() u:any,@Query('limit') limit?:string,@Query('conversationId') conversationId?:string) {return this.service.missions(u.sub,Number(limit||10),conversationId||undefined);}
   @Get("status") status() {
     return this.service.status();
   }
@@ -68,6 +69,10 @@ export class UnifiedController {
     return this.service.updateSettings(b, u);
   }
   @UseGuards(JwtAuthGuard) @Get('invoices') searchInvoices(@Query() q:any) {return this.service.searchInvoices(month(q.month),q.search || '',q.filter || 'all',Number(q.page || 1),Number(q.size || 15),q.sort || 'recent');}
+  @UseGuards(JwtAuthGuard) @Get("precontrole") precontrole(@Query("month") m: string) { return this.service.precontrole(month(m)); }
+  @UseGuards(JwtAuthGuard) @Get("plan-travail") planTravail(@Query("month") m: string) { return this.service.planTravail(month(m)); }
+  @UseGuards(JwtAuthGuard) @Get("qualite") qualite(@Query("month") m?: string) { return this.service.qualite(m ? month(m) : undefined); }
+  @UseGuards(JwtAuthGuard) @Get("briefs") briefs() { return this.service.list("brief"); }
   @UseGuards(JwtAuthGuard) @Get("summary") summary(@Query("month") m: string) {
     return this.service.summary(month(m));
   }
@@ -98,6 +103,8 @@ export class UnifiedController {
   ) {
     return this.service.archive(id, u);
   }
+  @UseGuards(JwtAuthGuard) @Get("invoices/:id/doublon") duplicateGroup(@Param("id", ParseIntPipe) id: number) { return this.service.duplicateGroup(id); }
+  @UseGuards(JwtAuthGuard) @Post("invoices/:id/doublon/lever") leverDoublon(@Param("id", ParseIntPipe) id: number, @Body() b: any, @UtilisateurCourant() u: any) { return this.service.leverDoublon(id, b?.motif, u); }
   @UseGuards(JwtAuthGuard) @Post("invoices/:id/document") link(
     @Param("id", ParseIntPipe) id: number,
     @Body() b: any,
@@ -118,9 +125,16 @@ export class UnifiedController {
   @UseInterceptors(
     FileInterceptor("file", { limits: { fileSize: 20 * 1024 * 1024 } }),
   )
-  upload(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any, @Query("preview") preview?: string, @Query("reuse") reuse?: string) {
-    return this.service.upload(f, u, preview === "true", reuse === "true");
+  upload(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any, @Query("preview") preview?: string, @Query("reuse") reuse?: string, @Query("role") role?: string, @Query("staging") staging?: string) {
+    return this.service.upload(f, u, preview === "true", reuse === "true", role, staging === "true");
   }
+  @UseGuards(JwtAuthGuard) @Post("documents/:id/comptabiliser") comptabiliser(@Param('id') id: string, @UtilisateurCourant() u: any) { return this.service.comptabiliserPiece(id, u); }
+  @UseGuards(JwtAuthGuard) @Get("consignes") consignes() { return this.service.consignes(); }
+  @UseGuards(JwtAuthGuard) @Post("consignes") memoriser(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.memoriserConsigne(b || {}, u); }
+  @UseGuards(JwtAuthGuard) @Delete("consignes/:id") oublier(@Param('id') id: string, @UtilisateurCourant() u: any) { return this.service.oublierConsigne(id, u); }
+  @UseGuards(JwtAuthGuard) @Get("documents/roles") documentRoles() { return this.service.documentRoles(); }
+  @UseGuards(JwtAuthGuard) @Post("documents/:id/role") setRole(@Param('id') id: string, @Body() b: any, @UtilisateurCourant() u: any) { return this.service.setDocumentRole(id, b?.role, u); }
+  @UseGuards(JwtAuthGuard) @Get("capacites") capacites(@UtilisateurCourant() u: any) { return this.service.capabilities(u); }
   @UseGuards(JwtAuthGuard) @Get("documents/:id/preview") preview(@Param('id') id: string) { return this.service.importPreview(id); }
   @UseGuards(JwtAuthGuard) @Put("documents/:id/mapping") mapping(@Param('id') id: string, @Body() b: any) { return this.service.importPreview(id, b.mapping); }
   @UseGuards(JwtAuthGuard) @Post("documents/:id/commit") commit(@Param('id') id: string, @UtilisateurCourant() u: any) { return this.service.resumeImport(id, u); }
@@ -215,11 +229,12 @@ export class UnifiedController {
   }
   @UseGuards(JwtAuthGuard) @Get("imports") lots() { return this.service.lots(); }
   @UseGuards(JwtAuthGuard) @Get("imports/:id") lot(@Param("id") id: string) { return this.service.get(id, "import_lot"); }
-  @UseGuards(JwtAuthGuard) @Post("imports/drive") importDrive(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.importDriveFolder(b?.url, u); }
+  @UseGuards(JwtAuthGuard) @Post("imports/:id/reprendre") resumeLot(@Param("id") id: string, @UtilisateurCourant() u: any) { return this.service.resumeLot(id, u); }
+  @UseGuards(JwtAuthGuard) @Post("imports/drive") importDrive(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.importDriveFolder(b?.url, u, b?.role); }
   @UseGuards(JwtAuthGuard)
   @Post("imports/zip")
   @UseInterceptors(FileInterceptor("file", { limits: { fileSize: 300 * 1024 * 1024 } }))
-  importZip(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any) { return this.service.importZip(f, u); }
+  importZip(@UploadedFile() f: Express.Multer.File, @UtilisateurCourant() u: any, @Query("role") role?: string, @Query("dryRun") dryRun?: string) { return dryRun === "true" ? this.service.manifestZip(f) : this.service.importZip(f, u, role); }
   @UseGuards(JwtAuthGuard) @Get("livrables/:id") async livrable(@Param("id") id: string, @UtilisateurCourant() u: any, @Res() res: Response) {
     const f = await this.service.livrable(id, u);
     res.setHeader("Content-Type", f.mime);
@@ -255,7 +270,9 @@ export class UnifiedController {
   @UseGuards(JwtAuthGuard) @Post("releve/attach") releveAttach(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.releveAttach(b?.ids, month(b?.month), u); }
   @UseGuards(JwtAuthGuard) @Post("releve/detach/:id") releveDetach(@Param("id") id: string, @UtilisateurCourant() u: any) { return this.service.releveDetach(Number(id), u); }
   @UseGuards(JwtAuthGuard) @Post("releve/close") releveClose(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.releveClose(month(b?.month), u); }
-  @UseGuards(JwtAuthGuard) @Post("releve/reopen") releveReopen(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.releveReopen(month(b?.month), u); }
+  @UseGuards(JwtAuthGuard) @Post("releve/reopen") releveReopen(@Body() b: any, @UtilisateurCourant() u: any) { return this.service.releveReopen(month(b?.month), u, b?.motif); }
+  @UseGuards(JwtAuthGuard) @Get("releve/versions") releveVersions(@Query("month") m: string) { return this.service.releveVersions(month(m)); }
+  @UseGuards(JwtAuthGuard) @Get("releve/versions/:id") releveVersion(@Param("id") id: string) { return this.service.get(id, "releve_version"); }
   @UseGuards(JwtAuthGuard) @Get("export") async export(
     @Query("month") m: string,
     @Query("format") format: string,

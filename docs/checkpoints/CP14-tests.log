@@ -1,0 +1,14 @@
+
+> waraqa-unified-backend@4.6.0 test:e2e
+> jest --config ./test/jest-e2e.json --runInBand --testPathPattern=lot-reprise
+
+PASS test/lot-reprise.e2e-spec.ts
+  Import en lot durable et manifeste
+    ✓ manifeste avant traitement : rôles prévus et exclusions, rien de stocké (40 ms)
+    ✓ le lot conserve son archive, annonce les rôles prévus, et une interruption reprend sans rejouer (313 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       2 passed, 2 total
+Snapshots:   0 total
+Time:        4.743 s, estimated 6 s
+Ran all test suites matching /lot-reprise/i.

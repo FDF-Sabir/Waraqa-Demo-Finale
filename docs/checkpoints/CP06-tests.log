@@ -1,0 +1,15 @@
+
+> waraqa-unified-backend@4.5.0 test:e2e
+> jest --config ./test/jest-e2e.json --runInBand --testPathPattern=cockpit
+
+PASS test/cockpit.e2e-spec.ts
+  Précontrôle et plan de travail
+    ✓ précontrôle : société incomplète, lignes non revues, incomplètes, doublons et documents à classer, avec actions (40 ms)
+    ✓ plan de travail : entonnoir avec identifiants, états et invites prêtes pour l’assistant (21 ms)
+    ✓ les mêmes résultats sont servis à l’assistant, puis les blocages tombent quand le travail est fait (73 ms)
+
+Test Suites: 1 passed, 1 total
+Tests:       3 passed, 3 total
+Snapshots:   0 total
+Time:        4.238 s
+Ran all test suites matching /cockpit/i.

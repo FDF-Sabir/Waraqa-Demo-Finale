@@ -41,11 +41,19 @@ describe('Intégrité de finalisation',()=>{
  it('sauvegarde incluant SQLite et originaux, restauration contrôlée',async()=>{
   const buffer=Buffer.from('%PDF-fictif-test');
   const doc=await service.upload({originalname:'fictif.pdf',size:buffer.length,buffer} as any,user);
+  const livrable=await (service as any).saveLivrable({buffer:Buffer.from('id;montant\n1;12'),mime:'text/csv',name:'tableau.csv'},user.sub);
   const archive=await service.backup(user), data=JSON.parse(gunzipSync(archive).toString());
+  expect(data.format).toBe('waraqa-backup-2');
   expect(data.files['files/'+doc.id+'.pdf']).toBe(buffer.toString('base64'));
+  expect(data.files['livrables/'+livrable.id]).toBe(Buffer.from('id;montant\n1;12').toString('base64'));
   const filename=join(dir,'backup.gz');await writeFile(filename,archive);
   const {restore}=require('../../scripts/restore.cjs');
-  expect((await restore(filename,join(dir,'restored'))).integrity).toBe('ok');
+  const restored=await restore(filename,join(dir,'restored'));
+  expect(restored).toEqual(expect.objectContaining({integrity:'ok',livrables:1,livrablesManquants:[]}));
+  // Sauvegarde falsifiée : un livrable référencé mais absent est refusé.
+  const partial={...data,files:{...data.files}};delete partial.files['livrables/'+livrable.id];delete partial.hashes['livrables/'+livrable.id];
+  await writeFile(join(dir,'partial.gz'),require('zlib').gzipSync(JSON.stringify(partial)));
+  await expect(restore(join(dir,'partial.gz'),join(dir,'restored-partial'))).rejects.toThrow('livré');
   await expect(restore(filename,join(dir,'restored'))).rejects.toThrow();
  });
  it('aperçu, mapping et reprise idempotente des lignes acceptées',async()=>{

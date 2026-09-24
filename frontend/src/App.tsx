@@ -21,6 +21,7 @@ import {
   bank,
 } from "./api";
 import Chat from "./UnifiedChat";
+import { RoleBadge, RoleSelect, WorkPlan, ROLE_SHORT } from "./Cockpit";
 import Settings from "./UnifiedSettings";
 import Declaration from "./Declaration";
 export { Icon } from "./Icons";
@@ -791,52 +792,20 @@ export default function App() {
               <div className="u-two">
                 <section className="panel u-pad">
                   <h2>Avancer sur votre dossier</h2>
-                  <p>
-                    Importez vos pièces, contrôlez les champs puis validez les
-                    lignes.
-                  </p>
                   <div className="u-task">
-                    <span>01 · Pièces en attente de saisie</span>
-                    <b>
-                      {
-                        docs.filter((d) =>
-                          ["a_saisir", "erreur"].includes(d.data.status),
-                        ).length
-                      }
-                    </b>
-                    <button
-                      className="secondary small"
-                      onClick={() => go("import")}
-                    >
-                      Ouvrir
-                    </button>
+                    <span>Désignations à confirmer</span>
+                    <b>{designations.filter((d) => d.enAttenteConfirmation).length}</b>
+                    <button className="secondary small" onClick={() => go("designations")}>Vérifier</button>
                   </div>
                   <div className="u-task">
-                    <span>02 · Désignations à confirmer</span>
-                    <b>
-                      {
-                        designations.filter((d) => d.enAttenteConfirmation)
-                          .length
-                      }
-                    </b>
-                    <button
-                      className="secondary small"
-                      onClick={() => go("designations")}
-                    >
-                      Vérifier
-                    </button>
+                    <span>Paiements à rapprocher</span>
+                    <b>{rows.filter((f) => bank(f) && !f.rapprocheeA).length}</b>
+                    <button className="secondary small" onClick={() => go("banque")}>Rapprocher</button>
                   </div>
                   <div className="u-task">
-                    <span>03 · Paiements à rapprocher</span>
-                    <b>
-                      {rows.filter((f) => bank(f) && !f.rapprocheeA).length}
-                    </b>
-                    <button
-                      className="secondary small"
-                      onClick={() => go("banque")}
-                    >
-                      Rapprocher
-                    </button>
+                    <span>Documents de référence conservés (modèles, historiques, à classer)</span>
+                    <b>{docs.filter((d) => d.data.status === "reference").length}</b>
+                    <button className="secondary small" onClick={() => go("import")}>Voir</button>
                   </div>
                 </section>
                 <section className="panel u-pad u-insight">
@@ -857,6 +826,9 @@ export default function App() {
                   </button>
                 </section>
               </div>
+              <section className="panel u-pad">
+                <WorkPlan month={month} go={go} run={run} refreshKey={invoices.length + ":" + docs.length + ":" + invoices.filter((f) => f.revueHumaine).length} ask={(t) => { setDraft(t); go("chat"); }} />
+              </section>
               <section className="panel u-pad">
                 <div className="u-row">
                   <h2>Dernières lignes du mois</h2>
@@ -951,7 +923,7 @@ export default function App() {
             />
           )}
           <footer>
-            Waraqa 4.5 · {settings?.ai.profile === "online" ? "Profil en ligne" : "Profil local"} ·{" "}
+            Waraqa 4.7 · {settings?.ai.profile === "online" ? "Profil en ligne" : "Profil local"} ·{" "}
             {settings?.ai.mode === "live"
               ? "IA connectée"
               : settings?.ai.profile === "online"
@@ -1505,6 +1477,7 @@ function InvoiceForm({
     </Modal>
   );
 }
+const LINE_ROLE = (r?: string) => !r || r === "piece_comptable" || r === "paiement";
 function Imports({
   docs,
   run,
@@ -1531,7 +1504,12 @@ function Imports({
     [lots, setLots] = useState<RecordItem[]>([]),
     [link, setLink] = useState(""),
     [needsRead, setNeedsRead] = useState(false),
+    [uploadRole, setUploadRole] = useState(""),
     [docLimit, setDocLimit] = useState(100);
+  const roleQuery = uploadRole ? `&role=${uploadRole}` : "";
+  async function setRole(d: RecordItem, role: string) {
+    await run(async () => { await api(`/workspace/documents/${d.id}/role`, "POST", { role }); await refresh(); }, role === "piece_comptable" ? "Document lu comme pièce comptable" : `Rôle « ${ROLE_SHORT[role]} » enregistré (aucune ligne créée)`);
+  }
   const running = lots.some((l) => l.data.status === "en_cours");
   useEffect(() => {
     api<RecordItem[]>("/workspace/imports").then(setLots).catch(() => undefined);
@@ -1550,7 +1528,7 @@ function Imports({
     setNeedsRead(false);
     const ok = await run(async () => {
       try {
-        const lot = await api<RecordItem>("/workspace/imports/drive", "POST", { url: link.trim() });
+        const lot = await api<RecordItem>("/workspace/imports/drive", "POST", { url: link.trim(), ...(uploadRole ? { role: uploadRole } : {}) });
         setLots((p) => [lot, ...p]);
         setLink("");
       } catch (e: any) {
@@ -1568,7 +1546,7 @@ function Imports({
       data.append("file", file);
       if (/\.zip$/i.test(file.name)) {
         try {
-          const lot = await api<RecordItem>("/workspace/imports/zip", "POST", data);
+          const lot = await api<RecordItem>("/workspace/imports/zip?x=1" + roleQuery, "POST", data);
           setLots((p) => [lot, ...p]);
           setProgress((p) => [...p, { name: file.name, status: `lot lancé · ${lot.data.total} pièce(s)`, errors: lot.data.skipped.map((x: any) => `${x.name} : ${x.reason}`).slice(0, 10) }]);
         } catch (e: any) {
@@ -1577,7 +1555,7 @@ function Imports({
         continue;
       }
       try {
-        const r = await api("/workspace/documents?preview=true", "POST", data);
+        const r = await api("/workspace/documents?preview=true" + roleQuery, "POST", data);
         setProgress((p) => [
           ...p,
           { name: file.name, status: r.data.status, errors: r.data.errors },
@@ -1646,6 +1624,13 @@ function Imports({
           {mode === "live"
             ? "Extraction IA activée pour PDF et images. Chaque ligne reste à vérifier."
             : "Sans clé API : Excel/CSV/JSON structurés sont lus réellement. PDF et images sont conservés pour saisie manuelle ou extraction ultérieure."}
+        </div>
+        <div className="u-task">
+          <span>
+            <b>Rôle des documents déposés</b>
+            <small>Par défaut, Waraqa détecte le rôle (chemin du dossier, structure du classeur, périodes, société). Un modèle, un historique, un référentiel ou un fichier de vérité terrain est conservé sans créer de ligne. Imposez un rôle si vous le connaissez.</small>
+          </span>
+          <span className="u-role-chip"><RoleSelect value={uploadRole} onChange={setUploadRole} allowAuto disabled={working} label="Rôle des documents déposés" /></span>
         </div>
         {files.map((f, i) => (
           <div className="u-task" key={i}>
@@ -1721,16 +1706,20 @@ function Imports({
               <summary>
                 <b>{l.data.source === "drive" ? "Drive" : "ZIP"} · {l.data.label}</b>
                 <span>
-                  {l.data.processed}/{l.data.total} pièce(s) · {l.data.items.reduce((n: number, x: any) => n + (x.lines || 0), 0)} ligne(s) ·{" "}
+                  {l.data.processed}/{l.data.total} fichier(s) · {l.data.items.reduce((n: number, x: any) => n + (x.lines || 0), 0)} ligne(s){l.data.references ? ` · ${l.data.references} référence(s)` : ""} ·{" "}
                   {l.data.status === "en_cours" ? "en cours" : l.data.status === "interrompu" ? "interrompu" : "terminé"}
                 </span>
                 <progress max={l.data.total || 1} value={l.data.processed} />
+                {l.data.status === "interrompu" && <button className="secondary small" onClick={(e) => { e.preventDefault(); run(async () => { await api(`/workspace/imports/${l.id}/reprendre`, "POST"); setLots(await api("/workspace/imports")); }, "Reprise du lot lancée"); }}>Reprendre le lot</button>}
+                {l.data.reprises > 0 && <small className="u-muted">repris {l.data.reprises} fois après interruption</small>}
               </summary>
               {l.data.items.map((x: any, i: number) => (
                 <div className="u-task" key={i}>
                   <span>{x.name}{x.error && <small className="u-warn">{x.error}</small>}</span>
-                  <Status tone={["a_verifier", "deja_importe"].includes(x.state) ? "green" : ["en_attente", "en_cours"].includes(x.state) ? "blue" : "amber"}>
-                    {String(x.state).replace(/_/g, " ")}{x.lines ? ` · ${x.lines}` : ""}
+                  {x.role && x.role !== "piece_comptable" && <RoleBadge role={x.role} />}
+                  {!x.role && x.rolePrevu && x.rolePrevu !== "piece_comptable" && <small className="u-muted">prévu : {ROLE_SHORT[x.rolePrevu]}</small>}
+                  <Status tone={["a_verifier", "deja_importe"].includes(x.state) ? "green" : ["en_attente", "en_cours"].includes(x.state) ? "blue" : x.state === "reference" ? "blue" : "amber"}>
+                    {x.state === "reference" ? "référence · aucune ligne" : String(x.state).replace(/_/g, " ")}{x.lines ? ` · ${x.lines}` : ""}
                   </Status>
                 </div>
               ))}
@@ -1754,6 +1743,7 @@ function Imports({
               <thead>
                 <tr>
                   <th>Document</th>
+                  <th>Rôle</th>
                   <th>Traitement</th>
                   <th>Lignes</th>
                   <th>Actions</th>
@@ -1770,10 +1760,18 @@ function Imports({
                       </small>
                     </td>
                     <td>
-                      <Status tone={d.data.errors.length ? "amber" : "green"}>
-                        {d.data.status.replaceAll("_", " ")}
+                      <span className="u-role-chip">
+                        <RoleSelect value={d.data.role || "piece_comptable"} onChange={(v) => setRole(d, v)} disabled={["en_cours", "en_attente"].includes(d.data.status) || (d.data.invoiceIds.length > 0 && !LINE_ROLE(d.data.role))} label={"Rôle de " + d.data.name} />
+                      </span>
+                      {d.data.identiteContradictoire && <small className="u-bad">Raison sociale du document : « {d.data.identite?.raisonSociale} » ≠ société configurée. Identité jamais recopiée.</small>}
+                      {d.data.roleSuggestion?.indices?.[0] && <small className="u-muted">{d.data.roleSource === "utilisateur" ? "Choisi par vous" : "Détecté"} · {d.data.roleSuggestion.indices[0]}</small>}
+                      {d.data.periodes?.length > 1 && <small className="u-muted">Périodes : {d.data.periodes.slice(0, 4).join(", ")}{d.data.periodes.length > 4 ? "…" : ""}</small>}
+                    </td>
+                    <td>
+                      <Status tone={d.data.status === "reference" ? "blue" : d.data.status === "a_comptabiliser" ? "amber" : d.data.errors.length ? "amber" : "green"}>
+                        {d.data.status === "reference" ? "référence · aucune ligne" : d.data.status === "a_comptabiliser" ? "en attente · à comptabiliser" : d.data.status.replaceAll("_", " ")}
                       </Status>
-                      <small>{d.data.mode}</small>
+                      <small>{d.data.status === "reference" ? "consultable par l’assistant" : d.data.status === "a_comptabiliser" ? "jointe au chat, aucune ligne" : d.data.mode}</small>
                     </td>
                     <td>{d.data.invoiceIds.length}</td>
                     <td>
@@ -1806,7 +1804,9 @@ function Imports({
                         {['partiel','interrompu','annule'].includes(d.data.status) && <button className="secondary small" onClick={() => run(async () => {await api(`/workspace/documents/${d.id}/commit`, 'POST');await refresh();}, 'Reprise terminée, consultez les rejets')}>Reprendre sans doublons</button>}
                         {d.data.status === 'en_cours' && <button className="secondary small" onClick={() => run(() => api(`/workspace/documents/${d.id}/cancel`, 'POST'), 'Annulation demandée après la ligne en cours')}>Annuler</button>}
                         {d.data.status === 'apercu' && <button className="primary small" onClick={() => setDetails(d)}>Vérifier l’aperçu</button>}
-                        {!d.data.invoiceIds.length && d.data.status !== 'apercu' && (
+                        {d.data.status === 'reference' && <button className="primary small" onClick={() => setRole(d, 'piece_comptable')}>Importer comme pièce</button>}
+                        {d.data.status === 'a_comptabiliser' && <button className="primary small" onClick={() => run(async () => { await api(`/workspace/documents/${d.id}/comptabiliser`, 'POST'); await refresh(); }, 'Pièce comptabilisée')}>Comptabiliser</button>}
+                        {!d.data.invoiceIds.length && !['apercu', 'reference'].includes(d.data.status) && (
                           <button
                             className="secondary small"
                             disabled={mode !== "live"}

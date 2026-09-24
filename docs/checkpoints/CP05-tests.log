@@ -1,0 +1,13 @@
+
+> waraqa-unified-backend@4.5.0 test:e2e
+> jest --config ./test/jest-e2e.json --runInBand --testPathPattern=workbook-chat|ia-live|document-roles
+
+PASS test/workbook-chat.e2e-spec.ts
+PASS test/ia-live.e2e-spec.ts (6.221 s)
+PASS test/document-roles.e2e-spec.ts
+
+Test Suites: 3 passed, 3 total
+Tests:       18 passed, 18 total
+Snapshots:   0 total
+Time:        12.109 s, estimated 15 s
+Ran all test suites matching /workbook-chat|ia-live|document-roles/i.

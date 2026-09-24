@@ -1,4 +1,5 @@
 import { dateIsoValide } from "../common/date-validation";
+import { assertLineOpen, assertMonthOpen } from "../common/period-lock";
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -54,6 +55,15 @@ export class FacturesService {
     }
   }
 
+  /** Décision humaine « ligne distincte confirmée » (plan L2.4) : la re-détection ne remarque plus ce même couple. */
+  private async doublonLeve(id: number, candidat?: number | null): Promise<boolean> {
+    if (!candidat) return false;
+    const rows = await this.repo.manager.query("SELECT data FROM workspace_records WHERE id = ?", ['doublon-decision-' + id]);
+    if (!rows.length) return false;
+    const d = JSON.parse(rows[0].data);
+    return d.decision === 'ligne_distincte' && (d.de === candidat || (Array.isArray(d.exclus) && d.exclus.includes(candidat)));
+  }
+
   async lister(): Promise<FactureEntity[]> {
     return this.repo.find({ where: { archivee: false } });
   }
@@ -80,6 +90,7 @@ export class FacturesService {
    */
   async validerLigne(id: number, auteur: AuteurAction): Promise<FactureEntity> {
     const facture = await this.trouver(id);
+    await assertLineOpen(this.repo.manager, facture, 'la revue');
 
     if (facture.statut !== StatutFacture.VALIDEE || facture.doublonDe || facture.archivee) {
       throw new BadRequestException('Corrigez les champs manquants et le doublon avant validation.');
@@ -114,6 +125,7 @@ export class FacturesService {
     }
 
     if (!dateIsoValide(dto.dateFac) || !dateIsoValide(dto.datePaie)) throw new BadRequestException('Date inexistante.');
+    await assertMonthOpen(this.repo.manager, dto.fiscalMonth, 'd’y déclarer une nouvelle ligne');
     if (dto.creditOf) {
       const original = await this.trouver(dto.creditOf);
       if (original.archivee || original.creditOf || !original.mTtc || original.mTtc <= 0 || [SousType.RELEVE_BANCAIRE, SousType.AVIS_DEBIT_VIREMENT].includes(original.sousType)) throw new BadRequestException('Facture source d’avoir invalide.');
@@ -239,6 +251,9 @@ export class FacturesService {
     auteur: AuteurAction,
   ): Promise<FactureEntity> {
     const facture = await this.trouver(id);
+    await assertLineOpen(this.repo.manager, facture, 'la modification');
+    if (dto.fiscalMonth !== undefined && dto.fiscalMonth !== facture.fiscalMonth)
+      await assertMonthOpen(this.repo.manager, dto.fiscalMonth, 'd’y rattacher une ligne');
 
     if (dto.idPaie !== undefined && !idPaieEstValide(dto.idPaie)) {
       throw new BadRequestException(
@@ -313,7 +328,8 @@ export class FacturesService {
     });
 
     const autres = (await this.lister()).filter(f => f.id !== id);
-    facture.doublonDe = detecterDoublon(facture, autres)?.id ?? null as any;
+    const candidat = detecterDoublon(facture, autres)?.id ?? null;
+    facture.doublonDe = (await this.doublonLeve(id, candidat)) ? null as any : candidat as any;
     const { id: rowId, creeLe, modifieLe, version, ...changes } = facture;
     const updated = await this.repo.update({ id, version }, { ...changes, version: version + 1 });
     if (!updated.affected) throw new ConflictException('Modification concurrente. Rechargez la ligne ; votre saisie reste disponible.');
@@ -339,6 +355,7 @@ export class FacturesService {
    */
   async confirmerSansFacture(id: number, auteur: AuteurAction): Promise<FactureEntity> {
     const facture = await this.trouver(id);
+    await assertLineOpen(this.repo.manager, facture, 'la confirmation');
 
     if (facture.statut !== StatutFacture.EN_ATTENTE_CONFIRMATION_PAIEMENT) {
       throw new BadRequestException(
@@ -348,7 +365,8 @@ export class FacturesService {
 
     facture.statut = StatutFacture.VALIDEE;
     const autres = (await this.lister()).filter(f => f.id !== id);
-    facture.doublonDe = detecterDoublon(facture, autres)?.id ?? null as any;
+    const candidat = detecterDoublon(facture, autres)?.id ?? null;
+    facture.doublonDe = (await this.doublonLeve(id, candidat)) ? null as any : candidat as any;
     const sauvegardee = await this.repo.save(facture);
 
     await this.journal.ecrire({

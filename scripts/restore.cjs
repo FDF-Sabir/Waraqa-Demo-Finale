@@ -6,16 +6,16 @@ const { createHash } = require('node:crypto');
 const sqlite = require('../backend/node_modules/sqlite3');
 async function restore(archive, destination) {
   const data = JSON.parse(gunzipSync(await fs.readFile(archive), { maxOutputLength: 512 * 1024 * 1024 }));
-  if (data.format !== 'waraqa-backup-1' || !data.files?.['waraqa.sqlite']) throw Error('Format de sauvegarde invalide.');
+  if (!['waraqa-backup-1', 'waraqa-backup-2'].includes(data.format) || !data.files?.['waraqa.sqlite']) throw Error('Format de sauvegarde invalide.');
   const entries = Object.entries(data.files);
   for (const [name, content] of entries) {
-    if (!/^(waraqa\.sqlite|files\/[a-f0-9-]+\.[a-z0-9]+)$/i.test(name)) throw Error('Chemin de sauvegarde invalide.');
+    if (!/^(waraqa\.sqlite|files\/[a-f0-9-]+\.[a-z0-9]+|livrables\/livrable-[a-f0-9-]+|drive-outbox\/[a-f0-9]+\.bin|lots\/lot-[a-f0-9-]+\.zip)$/i.test(name)) throw Error('Chemin de sauvegarde invalide.');
     if (createHash('sha256').update(Buffer.from(content, 'base64')).digest('hex') !== data.hashes[name]) throw Error('Empreinte invalide : ' + name);
   }
   // mkdir without recursive deliberately rejects existing destinations.
   await fs.mkdir(destination, { mode: 0o700 });
   try {
-    await fs.mkdir(path.join(destination, 'files'));
+    for (const sub of ['files', 'livrables', 'drive-outbox', 'lots']) await fs.mkdir(path.join(destination, sub));
     for (const [name, content] of entries) await fs.writeFile(path.join(destination, name), Buffer.from(content, 'base64'), { mode: 0o600, flag: 'wx' });
     const db = new sqlite.Database(path.join(destination, 'waraqa.sqlite'));
     const query = sql => new Promise((resolve, reject) => db.all(sql, (e, rows) => e ? reject(e) : resolve(rows)));
@@ -27,11 +27,17 @@ async function restore(archive, destination) {
         const d = JSON.parse(doc.data), name = 'files/' + doc.id + d.ext;
         if (!data.files[name] || createHash('sha256').update(Buffer.from(data.files[name], 'base64')).digest('hex') !== d.hash) throw Error('Original absent ou altéré : ' + doc.id);
       }
+      // Fichiers livrés par l'agent : chacun doit être présent (format 2) ; une sauvegarde
+      // ancienne (format 1) ne les contenait pas — ils sont alors listés comme manquants.
+      const livrables = await query("SELECT id FROM workspace_records WHERE kind='livrable'");
+      var livrablesManquants = livrables.map(r => r.id).filter(id => !data.files['livrables/' + id]);
+      if (data.format === 'waraqa-backup-2' && livrablesManquants.length) throw Error('Fichier livré absent de la sauvegarde : ' + livrablesManquants[0]);
       // Existing JWTs cannot be used against the restored copy, even with the same server secret.
       await query('UPDATE utilisateurs SET sessionVersion = sessionVersion + 1');
     } finally { await new Promise(resolve => db.close(resolve)); }
   } catch (e) { await fs.rm(destination, { recursive: true, force: true }); throw e; }
-  return { integrity: 'ok', files: entries.length, destination };
+  const count = prefix => entries.filter(([n]) => n.startsWith(prefix)).length;
+  return { integrity: 'ok', format: data.format, files: entries.length, originaux: count('files/'), livrables: count('livrables/'), boiteEnvoi: count('drive-outbox/'), livrablesManquants, destination };
 }
 module.exports = { restore };
 if (require.main === module) {

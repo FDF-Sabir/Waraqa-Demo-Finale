@@ -40,10 +40,10 @@ describe('IA connectée (client simulé)', () => {
         const answered = Array.isArray(last.content) && last.content.some((b: any) => b.type === 'tool_result');
         if (!answered) {
           if (scenario === 'worker') return { stop_reason: 'tool_use', usage, content: [
-            { type: 'tool_use', id: 'w1-' + calls.length, name: 'corriger_ligne', input: { factureId: workerTarget, champs: { iceFrs: '001234567000077', idPaie: 2 }, justification: 'ICE et chèque lus sur la pièce' } },
+            { type: 'tool_use', id: 'w1-' + calls.length, name: 'corriger_ligne', input: { factureId: workerTarget, champs: { iceFrs: '001234567000077', idPaie: 2 }, justification: 'ICE et chèque lus sur la pièce', source: { type: 'utilisateur', reference: 'demande du comptable' } } },
             { type: 'tool_use', id: 'w2-' + calls.length, name: 'generer_tableau', input: { format: 'xlsx', mois: MONTH, regrouperPar: 'fournisseur', titre: 'Achats par fournisseur' } },
             { type: 'tool_use', id: 'w3-' + calls.length, name: 'generer_fichier', input: { format: 'json', scope: 'all' } },
-            { type: 'tool_use', id: 'w4-' + calls.length, name: 'corriger_ligne', input: { factureId: workerTarget, champs: { mHt: 1 }, justification: 'essai interdit' } },
+            { type: 'tool_use', id: 'w4-' + calls.length, name: 'corriger_ligne', input: { factureId: workerTarget, champs: { mHt: 1 }, justification: 'essai interdit', source: { type: 'utilisateur' } } },
           ] };
           if (scenario === 'agent') return { stop_reason: 'tool_use', usage, content: [
             { type: 'text', text: 'Analyse du dossier de septembre : lignes complètes à valider, export et snapshot demandés. ' + 'Détail des contrôles effectués sur chaque ligne avant proposition. '.repeat(3) },

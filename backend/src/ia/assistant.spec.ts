@@ -230,11 +230,19 @@ describe('Assistant comptable connecté (outils en lecture seule)', () => {
     it('corrige seulement les champs autorisés, avec justification ; les actions sont tracées', async () => {
       const a = act();
       const tools = new AssistantTools({ ...host(rows), act: a } as any, '2026-09');
-      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { mHt: 1 }, justification: 'x pièce' })).content).toContain('refusés : mHt');
-      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { iceFrs: '001' }, justification: '' })).isError).toBe(true);
-      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { iceFrs: '001234567000099' }, justification: 'ICE lu sur la pièce' })).isError).toBeUndefined();
-      expect(a.corriger).toHaveBeenCalledWith(2, { iceFrs: '001234567000099' }, 'ICE lu sur la pièce');
+      const src = { type: 'piece', documentId: 'doc-1', reference: 'page 1' };
+      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { mHt: 1 }, justification: 'x pièce', source: src })).content).toContain('refusés : mHt');
+      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { iceFrs: '001' }, justification: '', source: src })).isError).toBe(true);
+      // Provenance obligatoire : sans source, ou pièce citée sans identifiant, la correction est refusée.
+      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { iceFrs: '001234567000099' }, justification: 'ICE lu' })).content).toContain('Provenance requise');
+      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { iceFrs: '001234567000099' }, justification: 'ICE lu', source: { type: 'piece' } })).content).toContain('documentId requis');
+      expect((await tools.run('corriger_ligne', { factureId: 2, champs: { iceFrs: '001234567000099' }, justification: 'ICE lu sur la pièce', source: src, expectedVersion: 3 })).isError).toBeUndefined();
+      expect(a.corriger).toHaveBeenCalledWith(2, { iceFrs: '001234567000099' }, 'ICE lu sur la pièce', src, 3);
       expect(tools.executees).toEqual([{ outil: 'corriger_ligne', resume: '#2 corrigée (iceFrs)' }]);
+      // Idempotence : la même action répétée dans la réponse n'est pas rejouée.
+      const again = JSON.parse((await tools.run('corriger_ligne', { factureId: 2, champs: { iceFrs: '001234567000099' }, justification: 'ICE lu sur la pièce', source: src, expectedVersion: 3 })).content);
+      expect(again.dejaExecute).toBe(true); expect(a.corriger).toHaveBeenCalledTimes(1); expect(tools.executees).toHaveLength(1);
+      expect(tools.bilan()).toEqual(expect.objectContaining({ actions: 1, fichiers: 0, propositions: 0 }));
     });
     it('fichiers et tableaux livrés ; import Drive noté pour reprise', async () => {
       const tools = new AssistantTools({ ...host(rows), act: act() } as any, '2026-09');
@@ -242,7 +250,7 @@ describe('Assistant comptable connecté (outils en lecture seule)', () => {
       await tools.run('generer_tableau', { format: 'xlsx', debut: '2026-07', fin: '2026-09', regrouperPar: 'fournisseur' });
       expect((await tools.run('generer_fichier', { format: 'docx' })).isError).toBe(true);
       expect((await tools.run('generer_tableau', { format: 'xlsx', debut: '2026-13' })).isError).toBe(true);
-      await tools.run('importer_dossier_drive', { url: 'https://drive.google.com/drive/folders/1AbCdEfGhIjKlMn' });
+      await tools.run('importer_drive', { url: 'https://drive.google.com/drive/folders/1AbCdEfGhIjKlMn' });
       expect(tools.livrables.map(l => l.nom)).toEqual(['Waraqa-releve-xml-2026-09.releve-xml', 'Waraqa-carburant-2026-09.xlsx']);
       expect(tools.lotsEnCours).toEqual(['lot-1']);
     });
@@ -282,5 +290,37 @@ describe('Assistant comptable connecté (outils en lecture seule)', () => {
       beforeCall: async () => { throw new Error('Budget IA mensuel atteint'); }, onUsage: async () => undefined,
     })).rejects.toThrow('Budget');
     expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe('Rapports rédactionnels et doublons (CP08/CP09)', () => {
+  const rows = [
+    row(),
+    row({ id: 2, factNum: 'F-1', doublonDe: 1 }),
+  ];
+  const actWithReport = () => ({
+    corriger: jest.fn(), rattacher: jest.fn(), rapprocher: jest.fn(), snapshot: jest.fn(), relire: jest.fn(), confirmerDesignation: jest.fn(), traiterNotification: jest.fn(), importerDrive: jest.fn(),
+    fichier: jest.fn(), tableau: jest.fn(),
+    rapport: jest.fn(async (spec: any) => (spec.formats || ['md', 'pdf']).map((f: string, i: number) => ({ id: 'livrable-r' + i, nom: `Waraqa-rapport-${spec.titre}.${f}`, format: f, taille: 100 }))),
+  });
+  it('generer_rapport livre Markdown et PDF, avec les outils consultés comme sources par défaut', async () => {
+    const h = { ...host(rows), act: actWithReport() };
+    const tools = new AssistantTools(h as any, '2026-09');
+    await tools.run('synthese_mois', {});
+    const r = JSON.parse((await tools.run('generer_rapport', { titre: 'Bilan', contenu: '## Constat\n\nDeux lignes.' })).content);
+    expect(r.fichiers.map((f: any) => f.nom)).toEqual(['Waraqa-rapport-Bilan.md', 'Waraqa-rapport-Bilan.pdf']);
+    expect(h.act.rapport).toHaveBeenCalledWith(expect.objectContaining({ sources: ['synthese_mois'] }));
+    expect(tools.livrables).toHaveLength(2);
+    expect((await tools.run('generer_rapport', { titre: 'X', contenu: 'court', formats: ['docx'] })).isError).toBe(true);
+  });
+  it('lever_doublon : proposition réservée au comptable, justification obligatoire, ligne réellement marquée', async () => {
+    const tools = new AssistantTools(host(rows) as any, '2026-09');
+    expect((await tools.run('proposer_action', { type: 'lever_doublon', factureId: 2, libelle: 'Ligne distincte' })).isError).toBe(true);
+    expect((await tools.run('proposer_action', { type: 'lever_doublon', factureId: 1, libelle: 'Ligne distincte', justification: 'Deux livraisons distinctes le même jour' })).isError).toBe(true);
+    const ok = await tools.run('proposer_action', { type: 'lever_doublon', factureId: 2, libelle: 'Ligne distincte', justification: 'Deux livraisons distinctes le même jour' });
+    expect(ok.isError).toBeUndefined();
+    expect(tools.actions[0]).toEqual(expect.objectContaining({ type: 'lever_doublon', factureId: 2 }));
+    // Jamais exécuté directement par l'agent : aucun outil « AGIT » ne lève un doublon.
+    expect(ASSISTANT_TOOLS.some(t => /lever_doublon/.test(t.name))).toBe(false);
   });
 });
