@@ -335,27 +335,29 @@ export default function Chat({
               </b>
               <small>{month}</small>
             </span>
-            {sameMonth && (
-              <div className="u-actions">
-                <button className="secondary small" onClick={() => setShowCap(true)} title="Catalogue réel des capacités de l’application et de l’assistant">
-                  Que sait faire Waraqa ?
-                </button>
-                <button
-                  className="secondary small"
-                  disabled={busy}
-                  onClick={() => setRename(true)}
-                >
-                  Renommer
-                </button>
-                <button
-                  className="secondary small"
-                  disabled={busy}
-                  onClick={() => setRemove(true)}
-                >
-                  Supprimer
-                </button>
-              </div>
-            )}
+            <div className="u-actions">
+              <button className="secondary small" onClick={() => setShowCap(true)} title="Catalogue réel des capacités de l’application et de l’assistant">
+                Que sait faire Waraqa ?
+              </button>
+              {sameMonth && (
+                <>
+                  <button
+                    className="secondary small"
+                    disabled={busy}
+                    onClick={() => setRename(true)}
+                  >
+                    Renommer
+                  </button>
+                  <button
+                    className="secondary small"
+                    disabled={busy}
+                    onClick={() => setRemove(true)}
+                  >
+                    Supprimer
+                  </button>
+                </>
+              )}
+            </div>
           </div>
           <div className="u-chat-scroll" ref={scroll}>
             {sameMonth && <Missions conversationId={activeId} refreshKey={messages.length + ":" + busy} />}

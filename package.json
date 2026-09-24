@@ -15,7 +15,8 @@
     "test:ui": "node scripts/ui-test.mjs",
     "test:ia": "node scripts/test-ia-reelle.cjs",
     "test:releve": "node scripts/test-reel-releve.cjs",
-    "manifest": "node scripts/manifest.cjs"
+    "manifest": "node scripts/manifest.cjs",
+    "test:ui:cockpit": "node scripts/ui-test-cockpit.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0"
